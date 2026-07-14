@@ -11,5 +11,5 @@ jobs:
       working-directory: frontend
       install-command: pnpm install --no-frozen-lockfile --ignore-scripts
       build-command: pnpm exec nx build ext-eventius-contract
-      publish-command: pnpm exec nx release --yes && git push --follow-tags
+      publish-command: pnpm exec nx release --yes && npm access set status=public @sneat/extension-eventius-contract && git push --follow-tags
     secrets: inherit
