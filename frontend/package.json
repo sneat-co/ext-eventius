@@ -1,0 +1,22 @@
+{
+  "name": "@sneat/ext-eventius-frontend",
+  "version": "0.0.0",
+  "private": true,
+  "packageManager": "pnpm@11.0.9",
+  "dependencies": {
+    "@angular/core": "21.2.9",
+    "@sneat/core": "0.22.0",
+    "@sneat/extension-calendarius-contract": "0.22.4",
+    "rxjs": "~7.8.2",
+    "tslib": "^2.8.1"
+  },
+  "devDependencies": {
+    "@angular/compiler": "21.2.9",
+    "@angular/compiler-cli": "21.2.9",
+    "@nx/angular": "22.7.5",
+    "@nx/js": "22.7.5",
+    "ng-packagr": "~21.2.5",
+    "nx": "22.7.5",
+    "typescript": "~5.9.3"
+  }
+}

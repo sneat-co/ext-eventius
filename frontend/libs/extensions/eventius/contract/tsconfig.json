@@ -1,0 +1,6 @@
+{
+  "extends": "../../../../tsconfig.base.json",
+  "compilerOptions": { "strict": true, "module": "preserve", "moduleResolution": "bundler", "declaration": false },
+  "files": [], "include": [],
+  "references": [{ "path": "./tsconfig.lib.json" }]
+}

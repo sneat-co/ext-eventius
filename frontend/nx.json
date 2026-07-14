@@ -1,0 +1,16 @@
+{
+  "$schema": "./node_modules/nx/schemas/nx-schema.json",
+  "release": {
+    "projects": ["ext-eventius-contract"],
+    "projectsRelationship": "fixed",
+    "releaseTagPattern": "v{version}",
+    "git": { "commit": true, "tag": true, "push": true },
+    "version": { "conventionalCommits": true, "fallbackCurrentVersionResolver": "disk" },
+    "changelog": { "workspaceChangelog": true, "automaticFromRef": true },
+    "publish": {
+      "executor": "@nx/js:release-publish",
+      "dependsOn": ["build"],
+      "options": { "packageRoot": "dist/{projectRoot}", "access": "public" }
+    }
+  }
+}
