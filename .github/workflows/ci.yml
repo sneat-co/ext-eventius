@@ -6,8 +6,23 @@ on:
   pull_request:
 
 jobs:
+  contract_boundary:
+    name: contract capability boundary
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reject implementation and host dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git grep -nE '"github\.com/(sneat-co/(sneat-go|sneat-bots|[^" ]+/backend)|dal-go/)' -- ':(glob)backend/**/*.go'; then
+            echo 'ext-eventius is a contract module and may not import implementations, hosts, or DAL packages.' >&2
+            exit 1
+          fi
+
   backend:
     name: backend build + test
+    needs: contract_boundary
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
