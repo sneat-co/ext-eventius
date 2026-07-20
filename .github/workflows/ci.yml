@@ -19,4 +19,13 @@ jobs:
         run: go build ./...
       - name: Test
         working-directory: backend
-        run: go test ./...
+        shell: bash
+        run: |
+          set -euo pipefail
+          go test ./... -coverprofile=coverage.out
+          coverage="$(go tool cover -func=coverage.out | awk '/^total:/ {print $3}' | tr -d '%')"
+          floor="$(tr -d '[:space:]' < coverage_floor.txt)"
+          awk -v coverage="$coverage" -v floor="$floor" 'BEGIN { exit !(coverage >= floor) }' || {
+            echo "coverage ${coverage}% is below floor ${floor}%" >&2
+            exit 1
+          }
