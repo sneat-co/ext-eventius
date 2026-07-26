@@ -7,8 +7,8 @@ import (
 	"time"
 )
 
-// Event is the presentation-safe event view required by EventiusBot. It is a
-// view model, not the Eventius persisted aggregate or a DAL record.
+// Event is the presentation-safe event view required by the legacy Eventius
+// host adapter. It is a view model, not a persisted aggregate or DAL record.
 type Event struct {
 	ID              string
 	Title           string
@@ -50,8 +50,8 @@ type CreateEventSpec struct {
 	MinParticipants int
 }
 
-// Service is the Eventius application port for bot controllers. Implementors
-// own authorization, persistence, and external integration.
+// Service is retained for the pre-vertical compatibility adapter. New bot
+// controllers use EventService from canonical_service.go.
 type Service interface {
 	CreateEvent(ctx context.Context, userID, spaceID string, spec CreateEventSpec) (eventID string, err error)
 	ListUpcoming(ctx context.Context, spaceID string, horizon time.Duration) ([]EventWithRollup, error)
