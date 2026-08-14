@@ -30,6 +30,14 @@ type CompetiosRegistrationKey string
 type AttendanceEventID string
 type AttendanceInvitationID string
 
+// CalendarEventRef points at the already-created canonical Calendarius
+// kind=event Happening. The first Competios integration never asks Eventius to
+// create a second Event or to guess which Space should own one.
+type CalendarEventRef struct {
+	SpaceID     string `json:"spaceID"`
+	HappeningID string `json:"happeningID"`
+}
+
 type AttendanceEventState string
 
 const (
@@ -44,16 +52,33 @@ const (
 	AttendanceInvitationRevoked AttendanceInvitationState = "revoked"
 )
 
+// AttendanceResponderKind says why the bound account may answer this targeted
+// invitation. It is authority input only and is deliberately omitted from the
+// safe projection returned to Competios.
+type AttendanceResponderKind string
+
+const (
+	AttendanceResponderAccount  AttendanceResponderKind = "account"
+	AttendanceResponderGuardian AttendanceResponderKind = "guardian"
+)
+
+// AttendanceResponderRef binds RSVP submit to one authenticated account.
+// AccountID is an opaque identity reference; it is never an invitation token,
+// email address, contact payload, or public projection field.
+type AttendanceResponderRef struct {
+	Kind      AttendanceResponderKind `json:"kind"`
+	AccountID string                  `json:"accountID"`
+}
+
 // EnsureAttendanceEventRequest describes the presentation-safe attendance
-// event that Eventius should maintain for a Competios Event. RequestID makes a
-// retried command idempotent; CompetiosEventKey prevents duplicate events when
-// a different delivery attempt retries the same external Event.
+// event that Eventius should attach attendance to for a Competios Event.
+// CalendarEvent must already identify the canonical, scheduled Calendarius
+// kind=event Happening. RequestID makes a retried command idempotent;
+// CompetiosEventKey prevents conflicting correlation to another Happening.
 type EnsureAttendanceEventRequest struct {
 	RequestID         string            `json:"requestID"`
 	CompetiosEventKey CompetiosEventKey `json:"competiosEventKey"`
-	Title             string            `json:"title"`
-	StartsAt          time.Time         `json:"startsAt"`
-	Location          string            `json:"location"`
+	CalendarEvent     CalendarEventRef  `json:"calendarEvent"`
 }
 
 // EnsureAttendanceInvitationRequest makes one attendance invitation for a
@@ -67,6 +92,7 @@ type EnsureAttendanceInvitationRequest struct {
 	CompetiosTournamentKey   CompetiosTournamentKey   `json:"competiosTournamentKey"`
 	CompetiosCompetitionKey  CompetiosCompetitionKey  `json:"competiosCompetitionKey"`
 	CompetiosEntryKey        CompetiosEntryKey        `json:"competiosEntryKey"`
+	Responder                AttendanceResponderRef   `json:"responder"`
 }
 
 // AttendanceStatusProjection is safe to return to Competios. It intentionally
@@ -87,14 +113,17 @@ type AttendanceStatusProjection struct {
 }
 
 func ValidateEnsureAttendanceEventRequest(value EnsureAttendanceEventRequest) error {
-	if strings.TrimSpace(value.RequestID) == "" || strings.TrimSpace(string(value.CompetiosEventKey)) == "" || strings.TrimSpace(value.Title) == "" || value.StartsAt.IsZero() || strings.TrimSpace(value.Location) == "" {
+	if strings.TrimSpace(value.RequestID) == "" || strings.TrimSpace(string(value.CompetiosEventKey)) == "" || strings.TrimSpace(value.CalendarEvent.SpaceID) == "" || strings.TrimSpace(value.CalendarEvent.HappeningID) == "" {
 		return ErrInvalidCompetiosAttendanceRequest
 	}
 	return nil
 }
 
 func ValidateEnsureAttendanceInvitationRequest(value EnsureAttendanceInvitationRequest) error {
-	if strings.TrimSpace(value.RequestID) == "" || value.AttendanceEventID == "" || strings.TrimSpace(string(value.CompetiosRegistrationKey)) == "" || value.CompetiosTournamentKey == "" || value.CompetiosCompetitionKey == "" || value.CompetiosEntryKey == "" {
+	if strings.TrimSpace(value.RequestID) == "" || value.AttendanceEventID == "" || strings.TrimSpace(string(value.CompetiosRegistrationKey)) == "" || value.CompetiosTournamentKey == "" || value.CompetiosCompetitionKey == "" || value.CompetiosEntryKey == "" || strings.TrimSpace(value.Responder.AccountID) == "" {
+		return ErrInvalidCompetiosAttendanceRequest
+	}
+	if value.Responder.Kind != AttendanceResponderAccount && value.Responder.Kind != AttendanceResponderGuardian {
 		return ErrInvalidCompetiosAttendanceRequest
 	}
 	return nil
@@ -130,9 +159,9 @@ func ValidateAttendanceStatusProjection(value AttendanceStatusProjection) error 
 // submission; Competios can only ensure/revoke/cancel and query the safe
 // projection. Implementations must make both Ensure operations idempotent.
 type CompetiosAttendanceService interface {
-	EnsureAttendanceEvent(context.Context, string, EnsureAttendanceEventRequest) (AttendanceStatusProjection, error)
-	EnsureAttendanceInvitation(context.Context, string, EnsureAttendanceInvitationRequest) (AttendanceStatusProjection, error)
-	GetAttendanceStatus(context.Context, string, CompetiosEventKey, CompetiosRegistrationKey) (AttendanceStatusProjection, error)
-	RevokeAttendanceInvitation(context.Context, string, AttendanceInvitationID, string) (AttendanceStatusProjection, error)
-	CancelAttendanceEvent(context.Context, string, AttendanceEventID, string) (AttendanceStatusProjection, error)
+	EnsureAttendanceEvent(ctx context.Context, servicePrincipalID string, request EnsureAttendanceEventRequest) (AttendanceStatusProjection, error)
+	EnsureAttendanceInvitation(ctx context.Context, servicePrincipalID string, request EnsureAttendanceInvitationRequest) (AttendanceStatusProjection, error)
+	GetAttendanceStatus(ctx context.Context, servicePrincipalID string, eventKey CompetiosEventKey, registrationKey CompetiosRegistrationKey) (AttendanceStatusProjection, error)
+	RevokeAttendanceInvitation(ctx context.Context, servicePrincipalID string, invitationID AttendanceInvitationID, reason string) (AttendanceStatusProjection, error)
+	CancelAttendanceEvent(ctx context.Context, servicePrincipalID string, eventID AttendanceEventID, reason string) (AttendanceStatusProjection, error)
 }

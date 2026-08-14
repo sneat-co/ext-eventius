@@ -9,12 +9,20 @@ export type CompetiosAttendanceEventState = 'active' | 'cancelled';
 
 export type CompetiosAttendanceInvitationState = 'active' | 'revoked';
 
+export type CompetiosAttendanceResponderKind = 'account' | 'guardian';
+
+export interface ICompetiosAttendanceResponderRef {
+  readonly kind: CompetiosAttendanceResponderKind;
+  readonly accountID: string;
+}
+
 export interface IEnsureCompetiosAttendanceEventRequest {
   readonly requestID: string;
   readonly competiosEventKey: string;
-  readonly title: string;
-  readonly startsAt: string;
-  readonly location: string;
+  readonly calendarEvent: {
+    readonly spaceID: string;
+    readonly happeningID: string;
+  };
 }
 
 export interface IEnsureCompetiosAttendanceInvitationRequest {
@@ -24,6 +32,7 @@ export interface IEnsureCompetiosAttendanceInvitationRequest {
   readonly competiosTournamentKey: string;
   readonly competiosCompetitionKey: string;
   readonly competiosEntryKey: string;
+  readonly responder: ICompetiosAttendanceResponderRef;
 }
 
 export interface ICompetiosAttendanceStatus {
