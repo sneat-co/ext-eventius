@@ -3,9 +3,13 @@
 package facade4eventius
 
 import (
+	"bytes"
 	"errors"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/sneat-co/ext-eventius/backend/participation"
 )
 
 func TestAttendanceIdentifiersHaveFiniteCanonicalUTF8ByteBounds(t *testing.T) {
@@ -147,6 +151,243 @@ func TestCanonicalAttendanceCommandFingerprintIsStableAndFullPayload(t *testing.
 	}
 }
 
+func TestExactAttendanceCommandFingerprintEntryPoints(t *testing.T) {
+	tests := []struct {
+		name        string
+		operation   AttendanceCommandOperation
+		fingerprint func() (AttendanceCommandPayloadFingerprint, error)
+		invalid     func() (AttendanceCommandPayloadFingerprint, error)
+	}{
+		{
+			name:      "ensure event",
+			operation: AttendanceCommandEnsureEvent,
+			fingerprint: func() (AttendanceCommandPayloadFingerprint, error) {
+				return FingerprintEnsureAttendanceEventRequest(validEnsureAttendanceEventRequest())
+			},
+			invalid: func() (AttendanceCommandPayloadFingerprint, error) {
+				value := validEnsureAttendanceEventRequest()
+				value.RequestID = " "
+				return FingerprintEnsureAttendanceEventRequest(value)
+			},
+		},
+		{
+			name:      "ensure invitation",
+			operation: AttendanceCommandEnsureInvitation,
+			fingerprint: func() (AttendanceCommandPayloadFingerprint, error) {
+				return FingerprintEnsureAttendanceInviteeInvitationRequest(validEnsureAttendanceInviteeInvitationRequest())
+			},
+			invalid: func() (AttendanceCommandPayloadFingerprint, error) {
+				value := validEnsureAttendanceInviteeInvitationRequest()
+				value.CompetiosInviteeKey = " "
+				return FingerprintEnsureAttendanceInviteeInvitationRequest(value)
+			},
+		},
+		{
+			name:      "revoke invitation",
+			operation: AttendanceCommandRevokeInvitation,
+			fingerprint: func() (AttendanceCommandPayloadFingerprint, error) {
+				return FingerprintRevokeAttendanceInvitationCommand(validRevokeAttendanceInvitationCommand())
+			},
+			invalid: func() (AttendanceCommandPayloadFingerprint, error) {
+				value := validRevokeAttendanceInvitationCommand()
+				value.Reason = " "
+				return FingerprintRevokeAttendanceInvitationCommand(value)
+			},
+		},
+		{
+			name:      "cancel event",
+			operation: AttendanceCommandCancelEvent,
+			fingerprint: func() (AttendanceCommandPayloadFingerprint, error) {
+				return FingerprintCancelAttendanceEventCommand(validCancelAttendanceEventCommand())
+			},
+			invalid: func() (AttendanceCommandPayloadFingerprint, error) {
+				value := validCancelAttendanceEventCommand()
+				value.AttendanceEventID = " "
+				return FingerprintCancelAttendanceEventCommand(value)
+			},
+		},
+	}
+
+	seen := make(map[AttendanceCommandPayloadFingerprint]AttendanceCommandOperation, len(tests))
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			fingerprint, err := testCase.fingerprint()
+			if err != nil {
+				t.Fatalf("valid fingerprint: %v", err)
+			}
+			if !validAttendanceFingerprint(fingerprint) {
+				t.Fatalf("fingerprint = %q, want lowercase SHA-256", fingerprint)
+			}
+			if prior, duplicate := seen[fingerprint]; duplicate {
+				t.Fatalf("operation %q shared fingerprint with %q", testCase.operation, prior)
+			}
+			seen[fingerprint] = testCase.operation
+
+			invalidFingerprint, invalidErr := testCase.invalid()
+			assertInvalid(t, invalidErr)
+			if invalidFingerprint != "" {
+				t.Fatalf("invalid request fingerprint = %q, want empty", invalidFingerprint)
+			}
+		})
+	}
+}
+
+func TestCanonicalFingerprintWriterUsesBigEndianUTF8ByteLengths(t *testing.T) {
+	var got bytes.Buffer
+	writeFingerprintValue(&got, "🙂x")
+	want := append([]byte{0, 0, 0, 5}, []byte("🙂x")...)
+	if !bytes.Equal(got.Bytes(), want) {
+		t.Fatalf("encoded fingerprint value = %v, want %v", got.Bytes(), want)
+	}
+}
+
+func TestAttendanceCommandConflictErrorVocabulary(t *testing.T) {
+	err := &CompetiosAttendanceCommandConflictError{ServicePrincipalID: "principal-secret", RequestID: "request-secret"}
+	if err.Error() != ErrCompetiosAttendanceCommandConflict.Error() {
+		t.Fatalf("error text = %q, want sentinel text", err.Error())
+	}
+	if strings.Contains(err.Error(), err.ServicePrincipalID) || strings.Contains(err.Error(), err.RequestID) {
+		t.Fatal("conflict error text must not expose opaque identifiers")
+	}
+	if err.Code() != AttendanceCommandErrorCodeConflict {
+		t.Fatalf("error code = %q, want %q", err.Code(), AttendanceCommandErrorCodeConflict)
+	}
+	if !errors.Is(err, ErrCompetiosAttendanceCommandConflict) {
+		t.Fatal("typed error must unwrap to conflict sentinel")
+	}
+}
+
+func TestAttendanceCommandBindingValidationAndAnsweredProjectionIsolation(t *testing.T) {
+	command := validRevokeAttendanceInvitationCommand()
+	command.RequestID = "revoke-answered"
+	fingerprint, err := FingerprintRevokeAttendanceInvitationCommand(command)
+	if err != nil {
+		t.Fatal(err)
+	}
+	answer := participation.CoarseYes
+	respondedAt := time.Date(2026, time.August, 14, 9, 30, 0, 0, time.UTC)
+	projection := validAttendanceStatusProjection()
+	projection.Response = &answer
+	projection.RespondedAt = &respondedAt
+	binding, err := NewAttendanceCommandBinding("competios-production", command.RequestID, AttendanceCommandRevokeInvitation, fingerprint, projection)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	answer = participation.CoarseNo
+	respondedAt = respondedAt.Add(time.Hour)
+	if *binding.Projection.Response != participation.CoarseYes || !binding.Projection.RespondedAt.Equal(time.Date(2026, time.August, 14, 9, 30, 0, 0, time.UTC)) {
+		t.Fatal("new binding must retain an isolated copy of the recorded safe projection")
+	}
+
+	replayed, err := ResolveAttendanceCommandReplay(binding, binding.ServicePrincipalID, binding.RequestID, binding.Operation, binding.PayloadFingerprint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	*replayed.Response = participation.CoarseMaybe
+	*replayed.RespondedAt = replayed.RespondedAt.Add(2 * time.Hour)
+	if *binding.Projection.Response != participation.CoarseYes || !binding.Projection.RespondedAt.Equal(time.Date(2026, time.August, 14, 9, 30, 0, 0, time.UTC)) {
+		t.Fatal("replay result must not alias the durable recorded projection")
+	}
+
+	invalidOperation := AttendanceCommandOperation("delete_everything")
+	if _, err = NewAttendanceCommandBinding("competios-production", "invalid-operation", invalidOperation, fingerprint, projection); !errors.Is(err, ErrInvalidCompetiosAttendanceRequest) {
+		t.Fatalf("invalid binding constructor error = %v", err)
+	}
+	for name, mutate := range map[string]func(*AttendanceCommandBinding){
+		"service principal": func(value *AttendanceCommandBinding) { value.ServicePrincipalID = " " },
+		"request":           func(value *AttendanceCommandBinding) { value.RequestID = " " },
+		"operation":         func(value *AttendanceCommandBinding) { value.Operation = invalidOperation },
+		"fingerprint":       func(value *AttendanceCommandBinding) { value.PayloadFingerprint = "abcd" },
+		"projection":        func(value *AttendanceCommandBinding) { value.Projection.EventState = "unknown" },
+	} {
+		t.Run("binding rejects "+name, func(t *testing.T) {
+			invalid := binding
+			mutate(&invalid)
+			assertInvalid(t, ValidateAttendanceCommandBinding(invalid))
+		})
+	}
+
+	for _, operation := range []AttendanceCommandOperation{
+		AttendanceCommandEnsureEvent,
+		AttendanceCommandEnsureInvitation,
+		AttendanceCommandRevokeInvitation,
+		AttendanceCommandCancelEvent,
+	} {
+		if !operation.IsValid() {
+			t.Fatalf("documented operation %q rejected", operation)
+		}
+	}
+	if invalidOperation.IsValid() {
+		t.Fatalf("unknown operation %q accepted", invalidOperation)
+	}
+
+	for name, value := range map[string]AttendanceCommandPayloadFingerprint{
+		"short":     "abcd",
+		"non-hex":   AttendanceCommandPayloadFingerprint(strings.Repeat("z", 64)),
+		"uppercase": AttendanceCommandPayloadFingerprint(strings.Repeat("A", 64)),
+	} {
+		t.Run("rejects "+name+" fingerprint", func(t *testing.T) {
+			if validAttendanceFingerprint(value) {
+				t.Fatalf("invalid fingerprint %q accepted", value)
+			}
+		})
+	}
+}
+
+func TestResolveAttendanceCommandReplayRejectsMalformedInputsAndWrongKeys(t *testing.T) {
+	command := validCancelAttendanceEventCommand()
+	fingerprint, err := FingerprintCancelAttendanceEventCommand(command)
+	if err != nil {
+		t.Fatal(err)
+	}
+	projection := AttendanceStatusProjection{
+		CompetiosEventKey: command.CompetiosEventKey,
+		AttendanceEventID: command.AttendanceEventID,
+		EventState:        AttendanceEventCancelled,
+	}
+	binding, err := NewAttendanceCommandBinding("competios-production", command.RequestID, AttendanceCommandCancelEvent, fingerprint, projection)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tests := map[string]func() (AttendanceCommandBinding, string, string, AttendanceCommandOperation, AttendanceCommandPayloadFingerprint){
+		"invalid durable binding": func() (AttendanceCommandBinding, string, string, AttendanceCommandOperation, AttendanceCommandPayloadFingerprint) {
+			value := binding
+			value.Projection.EventState = "unknown"
+			return value, binding.ServicePrincipalID, binding.RequestID, binding.Operation, binding.PayloadFingerprint
+		},
+		"invalid incoming principal": func() (AttendanceCommandBinding, string, string, AttendanceCommandOperation, AttendanceCommandPayloadFingerprint) {
+			return binding, " ", binding.RequestID, binding.Operation, binding.PayloadFingerprint
+		},
+		"invalid incoming request": func() (AttendanceCommandBinding, string, string, AttendanceCommandOperation, AttendanceCommandPayloadFingerprint) {
+			return binding, binding.ServicePrincipalID, " ", binding.Operation, binding.PayloadFingerprint
+		},
+		"invalid incoming operation": func() (AttendanceCommandBinding, string, string, AttendanceCommandOperation, AttendanceCommandPayloadFingerprint) {
+			return binding, binding.ServicePrincipalID, binding.RequestID, "unknown", binding.PayloadFingerprint
+		},
+		"invalid incoming fingerprint": func() (AttendanceCommandBinding, string, string, AttendanceCommandOperation, AttendanceCommandPayloadFingerprint) {
+			return binding, binding.ServicePrincipalID, binding.RequestID, binding.Operation, "abcd"
+		},
+		"different principal key": func() (AttendanceCommandBinding, string, string, AttendanceCommandOperation, AttendanceCommandPayloadFingerprint) {
+			return binding, "another-principal", binding.RequestID, binding.Operation, binding.PayloadFingerprint
+		},
+		"different request key": func() (AttendanceCommandBinding, string, string, AttendanceCommandOperation, AttendanceCommandPayloadFingerprint) {
+			return binding, binding.ServicePrincipalID, "another-request", binding.Operation, binding.PayloadFingerprint
+		},
+	}
+	for name, inputs := range tests {
+		t.Run(name, func(t *testing.T) {
+			stored, principal, requestID, operation, incomingFingerprint := inputs()
+			_, replayErr := ResolveAttendanceCommandReplay(stored, principal, requestID, operation, incomingFingerprint)
+			assertInvalid(t, replayErr)
+			if errors.Is(replayErr, ErrCompetiosAttendanceCommandConflict) {
+				t.Fatal("malformed inputs and wrong durable keys must not be reported as payload conflicts")
+			}
+		})
+	}
+}
+
 func TestAttendanceCommandBindingReplayAndConflictConformance(t *testing.T) {
 	command := validRevokeAttendanceInvitationCommand()
 	fingerprint, err := FingerprintRevokeAttendanceInvitationCommand(command)
@@ -259,6 +500,13 @@ func TestRevokeTargetRequiresEventParentCorrelationAndFullStoredTuple(t *testing
 			assertInvalid(t, ValidateRevokeAttendanceInvitationTarget(command, mismatch))
 		})
 	}
+
+	invalidCommand := command
+	invalidCommand.RequestID = " "
+	assertInvalid(t, ValidateRevokeAttendanceInvitationTarget(invalidCommand, stored))
+	invalidStored := stored
+	invalidStored.AttendanceInvitationID = " "
+	assertInvalid(t, ValidateRevokeAttendanceInvitationTarget(command, invalidStored))
 }
 
 func TestCancelTargetRequiresExactEventCorrelation(t *testing.T) {
@@ -284,6 +532,13 @@ func TestCancelTargetRequiresExactEventCorrelation(t *testing.T) {
 			assertInvalid(t, ValidateCancelAttendanceEventTarget(command, mismatch))
 		})
 	}
+
+	invalidCommand := command
+	invalidCommand.Reason = " "
+	assertInvalid(t, ValidateCancelAttendanceEventTarget(invalidCommand, stored))
+	invalidStored := stored
+	invalidStored.EventState = "unknown"
+	assertInvalid(t, ValidateCancelAttendanceEventTarget(command, invalidStored))
 }
 
 type boundedFieldValidator struct {
