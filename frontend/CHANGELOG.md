@@ -1,3 +1,19 @@
+## 0.0.5 (2026-08-14)
+
+### 🚀 Features
+
+- **contract:** add exact attendance revoke and cancel commands ([d559235](https://github.com/sneat-co/ext-eventius/commit/d559235))
+
+### 🩹 Fixes
+
+- **ci:** version contract artifact before publish ([9724c34](https://github.com/sneat-co/ext-eventius/commit/9724c34))
+- **ci:** version published contract manifest ([108086f](https://github.com/sneat-co/ext-eventius/commit/108086f))
+- **contract:** define durable attendance command semantics ([2c8d277](https://github.com/sneat-co/ext-eventius/commit/2c8d277))
+
+### ❤️ Thank You
+
+- Alexander Trakhimenok
+
 ## 0.0.4 (2026-08-14)
 
 ### 🚀 Features
