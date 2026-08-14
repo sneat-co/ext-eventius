@@ -1,3 +1,17 @@
+## 0.0.4 (2026-08-14)
+
+### 🚀 Features
+
+- **contract:** add invitee-scoped attendance status ([bb2e150](https://github.com/sneat-co/ext-eventius/commit/bb2e150))
+
+### 🩹 Fixes
+
+- **contract:** make invitee lifecycle explicit ([6e64b22](https://github.com/sneat-co/ext-eventius/commit/6e64b22))
+
+### ❤️ Thank You
+
+- Alexander Trakhimenok
+
 ## 0.0.3 (2026-08-14)
 
 ### 🚀 Features
