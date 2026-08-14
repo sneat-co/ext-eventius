@@ -32,7 +32,19 @@ export interface IEnsureCompetiosAttendanceInvitationRequest {
   readonly competiosTournamentKey: string;
   readonly competiosCompetitionKey: string;
   readonly competiosEntryKey: string;
+  /** Opaque identity of one invitee and its Competios lifecycle revision. */
+  readonly competiosInviteeKey: string;
   readonly responder: ICompetiosAttendanceResponderRef;
+}
+
+/** Complete, safe lookup key for precisely one invitee invitation status. */
+export interface IGetCompetiosAttendanceInviteeStatusRequest {
+  readonly competiosEventKey: string;
+  readonly competiosTournamentKey: string;
+  readonly competiosCompetitionKey: string;
+  readonly competiosEntryKey: string;
+  readonly competiosRegistrationKey: string;
+  readonly competiosInviteeKey: string;
 }
 
 export interface ICompetiosAttendanceStatus {
@@ -41,6 +53,7 @@ export interface ICompetiosAttendanceStatus {
   readonly competiosTournamentKey?: string;
   readonly competiosCompetitionKey?: string;
   readonly competiosEntryKey?: string;
+  readonly competiosInviteeKey?: string;
   readonly attendanceEventID: string;
   readonly attendanceInvitationID?: string;
   readonly eventState: CompetiosAttendanceEventState;

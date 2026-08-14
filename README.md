@@ -88,3 +88,20 @@ and can gain new helpers without a scale-change review.
 Nx workspace whose `ext-eventius-contract` project publishes
 `@sneat/extension-eventius-contract`. Eventius implementation stays private in
 `sneat-co/eventius`.
+
+## Competios attendance facade
+
+`backend/facade4eventius` exposes the provider-side safe attendance contract;
+`typespec/api4eventius-competios-attendance.tsp` is its frozen wire source and
+the published TypeScript mirror is in `frontend/`. The contract transfers no
+RSVP token, URL, contact, invitee name, or payment data.
+
+An attendance invitation is identified by the Event, Tournament, Competition,
+Entry, registration and an opaque `CompetiosInviteeKey`. Competios may encode
+the Entry lifecycle revision in that last value; Eventius compares it only as
+an opaque string. `CompetiosAttendanceService.GetAttendanceStatus` remains for
+legacy registration-only consumers and must fail closed when a registration is
+not uniquely one invitee. New consumers opt into
+`CompetiosAttendanceInviteeStatusService`: `GetAttendanceEventStatus` returns
+only event status, while `GetAttendanceInviteeStatus` requires the complete
+tuple and returns exactly one safe invitation projection.

@@ -3,6 +3,11 @@
   "version": "0.0.0",
   "private": true,
   "packageManager": "pnpm@11.0.9",
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit -p libs/extensions/eventius/contract/tsconfig.lib.json",
+    "typespec:check": "tsp compile ../typespec/api4eventius-competios-attendance.tsp"
+  },
   "dependencies": {
     "@angular/core": "21.2.9",
     "@sneat/core": "0.22.0",
@@ -15,8 +20,10 @@
     "@angular/compiler-cli": "21.2.9",
     "@nx/angular": "22.7.5",
     "@nx/js": "22.7.5",
+    "@typespec/compiler": "1.13.0",
     "ng-packagr": "~21.2.5",
     "nx": "22.7.5",
-    "typescript": "~5.9.3"
+    "typescript": "~5.9.3",
+    "vitest": "4.1.10"
   }
 }

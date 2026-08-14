@@ -20,6 +20,7 @@ import {
   ICompetiosAttendanceStatus,
   IEnsureCompetiosAttendanceEventRequest,
   IEnsureCompetiosAttendanceInvitationRequest,
+  IGetCompetiosAttendanceInviteeStatusRequest,
 } from '../models/competios-attendance';
 
 // Runtime-light service contracts the eventius pages/space-menu depend on. Each
@@ -126,7 +127,9 @@ export const BRING_ALONG_SERVICE = new InjectionToken<IBringAlongService>(
 /**
  * Server-to-server Competios integration facade. Implementations must never
  * expose RSVP tokens through this contract; the status is safe for Competios
- * projections only.
+ * projections only. getAttendanceStatus is retained for registration-only
+ * callers and must fail closed where a registration has multiple invitees;
+ * use ICompetiosAttendanceInviteeStatusService for all new invitee lookups.
  */
 export interface ICompetiosAttendanceService {
   ensureAttendanceEvent(
@@ -151,3 +154,24 @@ export interface ICompetiosAttendanceService {
 
 export const COMPETIOS_ATTENDANCE_SERVICE =
   new InjectionToken<ICompetiosAttendanceService>('CompetiosAttendanceService');
+
+/**
+ * Additive provider capability for exact invitee status. It does not change
+ * ICompetiosAttendanceService, so existing providers remain compatible.
+ * Event-only results contain no invitation tuple; invitee results require the
+ * complete Event/Tournament/Competition/Entry/registration/invitee tuple.
+ */
+export interface ICompetiosAttendanceInviteeStatusService
+  extends ICompetiosAttendanceService {
+  getAttendanceEventStatus(
+    competiosEventKey: string,
+  ): Observable<ICompetiosAttendanceStatus>;
+  getAttendanceInviteeStatus(
+    request: IGetCompetiosAttendanceInviteeStatusRequest,
+  ): Observable<ICompetiosAttendanceStatus>;
+}
+
+export const COMPETIOS_ATTENDANCE_INVITEE_STATUS_SERVICE =
+  new InjectionToken<ICompetiosAttendanceInviteeStatusService>(
+    'CompetiosAttendanceInviteeStatusService',
+  );

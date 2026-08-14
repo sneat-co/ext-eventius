@@ -14,4 +14,8 @@ func TestCanonicalAliasesPreserveTheFacadeVocabulary(t *testing.T) {
 	if ParticipationYes != "yes" || ParticipationMaybe != "maybe" || ParticipationNo != "no" {
 		t.Fatal("bot participation values must reuse canonical RSVP values")
 	}
+	inviteeKey := CompetiosInviteeKey("competios:invitee@entry-revision")
+	if facade4eventius.CompetiosInviteeKey(inviteeKey) != "competios:invitee@entry-revision" {
+		t.Fatal("bot contract must retain the canonical Competios invitee key")
+	}
 }
