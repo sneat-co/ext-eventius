@@ -70,6 +70,23 @@ export interface IGetCompetiosAttendanceInviteeStatusRequest {
   readonly competiosEntryLifecycleRevision: string;
 }
 
+/** Exact, auditable revoke command for one invitee lifecycle. */
+export interface IRevokeCompetiosAttendanceInvitationCommand
+  extends IGetCompetiosAttendanceInviteeStatusRequest {
+  readonly requestID: string;
+  readonly attendanceEventID: string;
+  readonly attendanceInvitationID: string;
+  readonly reason: string;
+}
+
+/** Exact, auditable cancel command for one attendance bridge. */
+export interface ICancelCompetiosAttendanceEventCommand {
+  readonly requestID: string;
+  readonly attendanceEventID: string;
+  readonly competiosEventKey: string;
+  readonly reason: string;
+}
+
 export interface ICompetiosAttendanceStatus {
   readonly competiosEventKey: string;
   readonly competiosRegistrationKey?: string;

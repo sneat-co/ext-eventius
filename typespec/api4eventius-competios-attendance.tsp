@@ -73,6 +73,31 @@ model GetAttendanceInviteeStatusRequest {
   competiosEntryLifecycleRevision: string;
 }
 
+/** Exact durable revoke command. The invitation ID and complete lifecycle
+ * tuple must name the same persisted invitation; reason is audit data. */
+model RevokeAttendanceInvitationCommand {
+  requestID: string;
+  attendanceEventID: string;
+  attendanceInvitationID: string;
+  competiosEventKey: string;
+  competiosTournamentKey: string;
+  competiosCompetitionKey: string;
+  competiosEntryKey: string;
+  competiosRegistrationKey: string;
+  competiosInviteeKey: string;
+  competiosEntryLifecycleRevision: string;
+  reason: string;
+}
+
+/** Exact durable cancel command. It suppresses active attendance invitations
+ * but never creates, updates, or cancels the canonical Calendarius Happening. */
+model CancelAttendanceEventCommand {
+  requestID: string;
+  attendanceEventID: string;
+  competiosEventKey: string;
+  reason: string;
+}
+
 /** Event-only projections omit every invitation tuple field; an invitation
  * projection contains the complete external tuple. answered responses have a
  * non-zero UTC respondedAt; revoked answered responses remain valid. */
