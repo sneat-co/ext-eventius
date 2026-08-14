@@ -20,6 +20,7 @@ import {
   ICompetiosAttendanceStatus,
   IEnsureCompetiosAttendanceEventRequest,
   IEnsureCompetiosAttendanceInvitationRequest,
+  IEnsureCompetiosAttendanceInviteeInvitationRequest,
   IGetCompetiosAttendanceInviteeStatusRequest,
 } from '../models/competios-attendance';
 
@@ -127,9 +128,10 @@ export const BRING_ALONG_SERVICE = new InjectionToken<IBringAlongService>(
 /**
  * Server-to-server Competios integration facade. Implementations must never
  * expose RSVP tokens through this contract; the status is safe for Competios
- * projections only. getAttendanceStatus is retained for registration-only
- * callers and must fail closed where a registration has multiple invitees;
- * use ICompetiosAttendanceInviteeStatusService for all new invitee lookups.
+ * projections only. The authenticated server-to-server transport binds the
+ * service principal; it is intentionally not serialized in this TypeScript
+ * mirror. Legacy ensure must fail closed, and getAttendanceStatus must reject
+ * ambiguous registration-only lookups. Use the additive invitee capability.
  */
 export interface ICompetiosAttendanceService {
   ensureAttendanceEvent(
@@ -158,11 +160,15 @@ export const COMPETIOS_ATTENDANCE_SERVICE =
 /**
  * Additive provider capability for exact invitee status. It does not change
  * ICompetiosAttendanceService, so existing providers remain compatible.
- * Event-only results contain no invitation tuple; invitee results require the
- * complete Event/Tournament/Competition/Entry/registration/invitee tuple.
+ * Event-only results contain no invitation tuple. Exact ensure and lookup
+ * require Event/Tournament/Competition/Entry/registration/invitee/lifecycle
+ * revision, and the provider verifies Event-to-attendanceEvent correlation.
  */
 export interface ICompetiosAttendanceInviteeStatusService
   extends ICompetiosAttendanceService {
+  ensureAttendanceInviteeInvitation(
+    request: IEnsureCompetiosAttendanceInviteeInvitationRequest,
+  ): Observable<ICompetiosAttendanceStatus>;
   getAttendanceEventStatus(
     competiosEventKey: string,
   ): Observable<ICompetiosAttendanceStatus>;

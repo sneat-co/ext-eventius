@@ -2,120 +2,196 @@ package facade4eventius
 
 import (
 	"errors"
+	"reflect"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/sneat-co/ext-eventius/backend/participation"
 )
 
-func TestCompetiosAttendanceContractsRejectUnsafeOrIncompleteValues(t *testing.T) {
-	validEvent := EnsureAttendanceEventRequest{RequestID: "request-1", CompetiosEventKey: "competios:event-1", CalendarEvent: CalendarEventRef{SpaceID: "space-1", HappeningID: "happening-1"}}
-	if err := ValidateEnsureAttendanceEventRequest(validEvent); err != nil {
-		t.Fatalf("valid event request: %v", err)
+func TestLegacyEnsureFailsClosed(t *testing.T) {
+	err := ValidateEnsureAttendanceInvitationRequest(EnsureAttendanceInvitationRequest{})
+	if !errors.Is(err, ErrLegacyCompetiosAttendanceEnsureUnsupported) {
+		t.Fatalf("legacy ensure error = %v", err)
 	}
-	if err := ValidateEnsureAttendanceInvitationRequest(validEnsureAttendanceInvitationRequest()); err != nil {
-		t.Fatalf("valid invitation request: %v", err)
-	}
-	if err := ValidateGetAttendanceInviteeStatusRequest(validGetAttendanceInviteeStatusRequest()); err != nil {
-		t.Fatalf("valid invitee status query: %v", err)
-	}
-	answer := participation.CoarseYes
-	validStatus := validAttendanceStatusProjection()
-	validStatus.Response = &answer
-	if err := ValidateAttendanceStatusProjection(validStatus); err != nil {
-		t.Fatalf("valid safe projection: %v", err)
-	}
+}
 
-	for name, err := range map[string]error{
-		"blank external event":        ValidateEnsureAttendanceEventRequest(EnsureAttendanceEventRequest{RequestID: "x", CalendarEvent: CalendarEventRef{SpaceID: "space-1", HappeningID: "happening-1"}}),
-		"blank calendar event":        ValidateEnsureAttendanceEventRequest(EnsureAttendanceEventRequest{RequestID: "x", CompetiosEventKey: "e"}),
-		"blank registration":          ValidateEnsureAttendanceInvitationRequest(EnsureAttendanceInvitationRequest{RequestID: "x", AttendanceEventID: "a"}),
-		"blank responder account":     ValidateEnsureAttendanceInvitationRequest(EnsureAttendanceInvitationRequest{RequestID: "x", AttendanceEventID: "a", CompetiosRegistrationKey: "r", CompetiosTournamentKey: "t", CompetiosCompetitionKey: "c", CompetiosEntryKey: "e", CompetiosInviteeKey: "i", Responder: AttendanceResponderRef{Kind: AttendanceResponderAccount}}),
-		"unknown responder kind":      ValidateEnsureAttendanceInvitationRequest(EnsureAttendanceInvitationRequest{RequestID: "x", AttendanceEventID: "a", CompetiosRegistrationKey: "r", CompetiosTournamentKey: "t", CompetiosCompetitionKey: "c", CompetiosEntryKey: "e", CompetiosInviteeKey: "i", Responder: AttendanceResponderRef{Kind: "delegate", AccountID: "user-1"}}),
-		"response without invitation": ValidateAttendanceStatusProjection(AttendanceStatusProjection{CompetiosEventKey: "e", AttendanceEventID: "a", EventState: AttendanceEventActive, Response: &answer}),
-		"unknown response":            ValidateAttendanceStatusProjection(AttendanceStatusProjection{CompetiosEventKey: "e", CompetiosRegistrationKey: "r", CompetiosTournamentKey: "t", CompetiosCompetitionKey: "c", CompetiosEntryKey: "e", CompetiosInviteeKey: "i", AttendanceEventID: "a", AttendanceInvitationID: "i", EventState: AttendanceEventActive, InvitationState: AttendanceInvitationActive, Response: ptr(participation.Coarse("later"))}),
-	} {
-		if !errors.Is(err, ErrInvalidCompetiosAttendanceRequest) {
-			t.Errorf("%s error = %v, want ErrInvalidCompetiosAttendanceRequest", name, err)
+func TestAttendanceStatusProjectionHasNoTokenContactOrPaymentFields(t *testing.T) {
+	for _, forbidden := range []string{"Token", "Contact", "Payment"} {
+		for i := range reflect.TypeFor[AttendanceStatusProjection]().NumField() {
+			if strings.Contains(reflect.TypeFor[AttendanceStatusProjection]().Field(i).Name, forbidden) {
+				t.Fatalf("safe projection must not expose %s fields", forbidden)
+			}
 		}
 	}
 }
 
-func TestAttendanceStatusProjectionValidationBoundaries(t *testing.T) {
-	answer := participation.CoarseYes
-	at := time.Now().UTC()
-	valid := validAttendanceStatusProjection()
+func TestExactInviteeRequestsAndProjectionValidate(t *testing.T) {
+	if err := ValidateEnsureAttendanceEventRequest(validEnsureAttendanceEventRequest()); err != nil {
+		t.Fatalf("valid event request: %v", err)
+	}
+	if err := ValidateEnsureAttendanceInviteeInvitationRequest(validEnsureAttendanceInviteeInvitationRequest()); err != nil {
+		t.Fatalf("valid exact ensure request: %v", err)
+	}
+	if err := ValidateGetAttendanceInviteeStatusRequest(validGetAttendanceInviteeStatusRequest()); err != nil {
+		t.Fatalf("valid exact status query: %v", err)
+	}
+	answer, at := participation.CoarseYes, time.Now().UTC()
+	status := validAttendanceStatusProjection()
+	status.Response, status.RespondedAt = &answer, &at
+	if err := ValidateAttendanceStatusProjection(status); err != nil {
+		t.Fatalf("valid answered projection: %v", err)
+	}
+}
+
+func TestAttendanceValidatorsRejectEventAndResponderBoundaries(t *testing.T) {
+	for name, request := range map[string]EnsureAttendanceEventRequest{
+		"blank request":   {CompetiosEventKey: "event", CalendarEvent: CalendarEventRef{SpaceID: "space", HappeningID: "happening"}},
+		"blank event":     {RequestID: "request", CalendarEvent: CalendarEventRef{SpaceID: "space", HappeningID: "happening"}},
+		"blank space":     {RequestID: "request", CompetiosEventKey: "event", CalendarEvent: CalendarEventRef{HappeningID: "happening"}},
+		"blank happening": {RequestID: "request", CompetiosEventKey: "event", CalendarEvent: CalendarEventRef{SpaceID: "space"}},
+	} {
+		t.Run("event "+name, func(t *testing.T) {
+			assertInvalid(t, ValidateEnsureAttendanceEventRequest(request))
+		})
+	}
+
+	for name, modify := range map[string]func(*EnsureAttendanceInviteeInvitationRequest){
+		"blank request":     func(v *EnsureAttendanceInviteeInvitationRequest) { v.RequestID = " " },
+		"blank account":     func(v *EnsureAttendanceInviteeInvitationRequest) { v.Responder.AccountID = " " },
+		"unknown responder": func(v *EnsureAttendanceInviteeInvitationRequest) { v.Responder.Kind = "delegate" },
+	} {
+		t.Run("exact ensure "+name, func(t *testing.T) {
+			request := validEnsureAttendanceInviteeInvitationRequest()
+			modify(&request)
+			assertInvalid(t, ValidateEnsureAttendanceInviteeInvitationRequest(request))
+		})
+	}
+}
+
+func TestExactInviteeTupleRejectsEveryMissingField(t *testing.T) {
+	for _, name := range []string{"attendance event", "event", "tournament", "competition", "entry", "registration", "invitee", "lifecycle revision"} {
+		t.Run("ensure rejects "+name, func(t *testing.T) {
+			request := validEnsureAttendanceInviteeInvitationRequest()
+			setEnsureField(&request, name, " ")
+			assertInvalid(t, ValidateEnsureAttendanceInviteeInvitationRequest(request))
+		})
+	}
+	for _, name := range []string{"event", "tournament", "competition", "entry", "registration", "invitee", "lifecycle revision"} {
+		t.Run("query rejects "+name, func(t *testing.T) {
+			query := validGetAttendanceInviteeStatusRequest()
+			setQueryField(&query, name, " ")
+			assertInvalid(t, ValidateGetAttendanceInviteeStatusRequest(query))
+		})
+		t.Run("projection rejects "+name, func(t *testing.T) {
+			projection := validAttendanceStatusProjection()
+			setProjectionField(&projection, name, " ")
+			assertInvalid(t, ValidateAttendanceStatusProjection(projection))
+		})
+	}
+}
+
+func TestAttendanceStatusProjectionStateAndResponseBoundaries(t *testing.T) {
+	answer, utc := participation.CoarseYes, time.Now().UTC()
+	local := utc.In(time.FixedZone("review", 3600))
+	zero := time.Time{}
+
 	for name, projection := range map[string]AttendanceStatusProjection{
-		"cancelled event without invitation is valid":   {CompetiosEventKey: "event", AttendanceEventID: "eventius-event", EventState: AttendanceEventCancelled},
-		"answered invitation is valid":                  func() AttendanceStatusProjection { p := valid; p.Response, p.RespondedAt = &answer, &at; return p }(),
-		"blank event key":                               {AttendanceEventID: "eventius-event", EventState: AttendanceEventActive},
-		"blank attendance event":                        {CompetiosEventKey: "event", EventState: AttendanceEventActive},
-		"unknown event state":                           {CompetiosEventKey: "event", AttendanceEventID: "eventius-event", EventState: "gone"},
-		"event only carries invitation metadata":        {CompetiosEventKey: "event", AttendanceEventID: "eventius-event", EventState: AttendanceEventActive, InvitationState: AttendanceInvitationActive},
-		"invitation missing external registration data": {CompetiosEventKey: "event", AttendanceEventID: "eventius-event", AttendanceInvitationID: "invitation", EventState: AttendanceEventActive, InvitationState: AttendanceInvitationActive},
-		"unknown invitation state":                      func() AttendanceStatusProjection { p := valid; p.InvitationState = "sent"; return p }(),
-		"response timestamp without response":           func() AttendanceStatusProjection { p := valid; p.RespondedAt = &at; return p }(),
+		"event only is valid":                   {CompetiosEventKey: "event", AttendanceEventID: "eventius-event", EventState: AttendanceEventCancelled},
+		"answered revoked is valid":             answeredProjection(AttendanceEventActive, AttendanceInvitationRevoked, answer, utc),
+		"answered cancelled revoked is valid":   answeredProjection(AttendanceEventCancelled, AttendanceInvitationRevoked, answer, utc),
+		"cancelled revoked unanswered is valid": withStates(AttendanceEventCancelled, AttendanceInvitationRevoked),
+		"cancelled active invitation":           withStates(AttendanceEventCancelled, AttendanceInvitationActive),
+		"response without timestamp":            withResponse(&answer, nil),
+		"timestamp without response":            withResponse(nil, &utc),
+		"response with zero timestamp":          withResponse(&answer, &zero),
+		"response with non UTC timestamp":       withResponse(&answer, &local),
+		"event only with invitation tuple": func() AttendanceStatusProjection {
+			p := AttendanceStatusProjection{CompetiosEventKey: "event", AttendanceEventID: "eventius-event", EventState: AttendanceEventActive}
+			p.CompetiosInviteeKey = "invitee"
+			return p
+		}(),
+		"invitation missing lifecycle revision": func() AttendanceStatusProjection {
+			p := validAttendanceStatusProjection()
+			p.CompetiosEntryLifecycleRevision = ""
+			return p
+		}(),
+		"unknown response": func() AttendanceStatusProjection {
+			p := validAttendanceStatusProjection()
+			p.Response, p.RespondedAt = ptr(participation.Coarse("later")), &utc
+			return p
+		}(),
+		"unknown event state": func() AttendanceStatusProjection {
+			p := validAttendanceStatusProjection()
+			p.EventState = "gone"
+			return p
+		}(),
+		"unknown invitation state": func() AttendanceStatusProjection {
+			p := validAttendanceStatusProjection()
+			p.InvitationState = "sent"
+			return p
+		}(),
+		"blank attendance event": func() AttendanceStatusProjection {
+			p := validAttendanceStatusProjection()
+			p.AttendanceEventID = " "
+			return p
+		}(),
 	} {
 		t.Run(name, func(t *testing.T) {
 			err := ValidateAttendanceStatusProjection(projection)
-			if name == "cancelled event without invitation is valid" || name == "answered invitation is valid" {
+			switch name {
+			case "event only is valid", "answered revoked is valid", "answered cancelled revoked is valid", "cancelled revoked unanswered is valid":
 				if err != nil {
 					t.Fatalf("ValidateAttendanceStatusProjection() = %v", err)
 				}
-				return
-			}
-			if !errors.Is(err, ErrInvalidCompetiosAttendanceRequest) {
-				t.Fatalf("ValidateAttendanceStatusProjection() = %v", err)
+			default:
+				assertInvalid(t, err)
 			}
 		})
 	}
 }
 
-func TestInviteeAttendanceTupleValidationIsExhaustive(t *testing.T) {
-	for name := range map[string]struct{}{"attendance event": {}, "tournament": {}, "competition": {}, "entry": {}, "registration": {}, "invitee": {}} {
-		t.Run("ensure rejects missing "+name, func(t *testing.T) {
-			request := validEnsureAttendanceInvitationRequest()
-			setInvitationTupleField(&request, name, " ")
-			if !errors.Is(ValidateEnsureAttendanceInvitationRequest(request), ErrInvalidCompetiosAttendanceRequest) {
-				t.Fatal("expected invalid ensure request")
-			}
-		})
-	}
-
-	for name := range map[string]struct{}{"event": {}, "tournament": {}, "competition": {}, "entry": {}, "registration": {}, "invitee": {}} {
-		t.Run("query rejects missing "+name, func(t *testing.T) {
-			query := validGetAttendanceInviteeStatusRequest()
-			setQueryTupleField(&query, name, " ")
-			if !errors.Is(ValidateGetAttendanceInviteeStatusRequest(query), ErrInvalidCompetiosAttendanceRequest) {
-				t.Fatal("expected invalid invitee query")
-			}
-		})
-		t.Run("projection rejects missing "+name, func(t *testing.T) {
-			projection := validAttendanceStatusProjection()
-			setProjectionTupleField(&projection, name, " ")
-			if !errors.Is(ValidateAttendanceStatusProjection(projection), ErrInvalidCompetiosAttendanceRequest) {
-				t.Fatal("expected invalid invitation projection")
-			}
-		})
-	}
+func validEnsureAttendanceEventRequest() EnsureAttendanceEventRequest {
+	return EnsureAttendanceEventRequest{RequestID: "request-event", CompetiosEventKey: "event", CalendarEvent: CalendarEventRef{SpaceID: "space", HappeningID: "happening"}}
 }
 
-func validEnsureAttendanceInvitationRequest() EnsureAttendanceInvitationRequest {
-	return EnsureAttendanceInvitationRequest{RequestID: "request-2", AttendanceEventID: "attendance-1", CompetiosRegistrationKey: "competios:registration-1", CompetiosTournamentKey: "competios:tournament-1", CompetiosCompetitionKey: "competios:competition-1", CompetiosEntryKey: "competios:entry-1", CompetiosInviteeKey: "competios:invitee-1@revision-1", Responder: AttendanceResponderRef{Kind: AttendanceResponderAccount, AccountID: "user-1"}}
+func validEnsureAttendanceInviteeInvitationRequest() EnsureAttendanceInviteeInvitationRequest {
+	return EnsureAttendanceInviteeInvitationRequest{RequestID: "request-invitee", AttendanceEventID: "eventius-event", CompetiosEventKey: "event", CompetiosTournamentKey: "tournament", CompetiosCompetitionKey: "competition", CompetiosEntryKey: "entry", CompetiosRegistrationKey: "registration", CompetiosInviteeKey: "invitee", CompetiosEntryLifecycleRevision: "revision-2", Responder: AttendanceResponderRef{Kind: AttendanceResponderAccount, AccountID: "account"}}
 }
 
 func validGetAttendanceInviteeStatusRequest() GetAttendanceInviteeStatusRequest {
-	return GetAttendanceInviteeStatusRequest{CompetiosEventKey: "event", CompetiosTournamentKey: "tournament", CompetiosCompetitionKey: "competition", CompetiosEntryKey: "entry", CompetiosRegistrationKey: "registration", CompetiosInviteeKey: "invitee@revision-1"}
+	return GetAttendanceInviteeStatusRequest{CompetiosEventKey: "event", CompetiosTournamentKey: "tournament", CompetiosCompetitionKey: "competition", CompetiosEntryKey: "entry", CompetiosRegistrationKey: "registration", CompetiosInviteeKey: "invitee", CompetiosEntryLifecycleRevision: "revision-2"}
 }
 
 func validAttendanceStatusProjection() AttendanceStatusProjection {
-	return AttendanceStatusProjection{CompetiosEventKey: "event", CompetiosTournamentKey: "tournament", CompetiosCompetitionKey: "competition", CompetiosEntryKey: "entry", CompetiosRegistrationKey: "registration", CompetiosInviteeKey: "invitee@revision-1", AttendanceEventID: "eventius-event", AttendanceInvitationID: "invitation", EventState: AttendanceEventActive, InvitationState: AttendanceInvitationActive}
+	return AttendanceStatusProjection{CompetiosEventKey: "event", CompetiosTournamentKey: "tournament", CompetiosCompetitionKey: "competition", CompetiosEntryKey: "entry", CompetiosRegistrationKey: "registration", CompetiosInviteeKey: "invitee", CompetiosEntryLifecycleRevision: "revision-2", AttendanceEventID: "eventius-event", AttendanceInvitationID: "invitation", EventState: AttendanceEventActive, InvitationState: AttendanceInvitationActive}
 }
 
-func setInvitationTupleField(value *EnsureAttendanceInvitationRequest, name, replacement string) {
+func answeredProjection(eventState AttendanceEventState, invitationState AttendanceInvitationState, answer participation.Coarse, at time.Time) AttendanceStatusProjection {
+	p := withStates(eventState, invitationState)
+	p.Response, p.RespondedAt = &answer, &at
+	return p
+}
+
+func withStates(eventState AttendanceEventState, invitationState AttendanceInvitationState) AttendanceStatusProjection {
+	p := validAttendanceStatusProjection()
+	p.EventState, p.InvitationState = eventState, invitationState
+	return p
+}
+
+func withResponse(answer *participation.Coarse, at *time.Time) AttendanceStatusProjection {
+	p := validAttendanceStatusProjection()
+	p.Response, p.RespondedAt = answer, at
+	return p
+}
+
+func setEnsureField(value *EnsureAttendanceInviteeInvitationRequest, name, replacement string) {
 	switch name {
 	case "attendance event":
 		value.AttendanceEventID = AttendanceEventID(replacement)
+	case "event":
+		value.CompetiosEventKey = CompetiosEventKey(replacement)
 	case "tournament":
 		value.CompetiosTournamentKey = CompetiosTournamentKey(replacement)
 	case "competition":
@@ -126,10 +202,12 @@ func setInvitationTupleField(value *EnsureAttendanceInvitationRequest, name, rep
 		value.CompetiosRegistrationKey = CompetiosRegistrationKey(replacement)
 	case "invitee":
 		value.CompetiosInviteeKey = CompetiosInviteeKey(replacement)
+	case "lifecycle revision":
+		value.CompetiosEntryLifecycleRevision = CompetiosEntryLifecycleRevision(replacement)
 	}
 }
 
-func setQueryTupleField(value *GetAttendanceInviteeStatusRequest, name, replacement string) {
+func setQueryField(value *GetAttendanceInviteeStatusRequest, name, replacement string) {
 	switch name {
 	case "event":
 		value.CompetiosEventKey = CompetiosEventKey(replacement)
@@ -143,10 +221,12 @@ func setQueryTupleField(value *GetAttendanceInviteeStatusRequest, name, replacem
 		value.CompetiosRegistrationKey = CompetiosRegistrationKey(replacement)
 	case "invitee":
 		value.CompetiosInviteeKey = CompetiosInviteeKey(replacement)
+	case "lifecycle revision":
+		value.CompetiosEntryLifecycleRevision = CompetiosEntryLifecycleRevision(replacement)
 	}
 }
 
-func setProjectionTupleField(value *AttendanceStatusProjection, name, replacement string) {
+func setProjectionField(value *AttendanceStatusProjection, name, replacement string) {
 	switch name {
 	case "event":
 		value.CompetiosEventKey = CompetiosEventKey(replacement)
@@ -160,6 +240,15 @@ func setProjectionTupleField(value *AttendanceStatusProjection, name, replacemen
 		value.CompetiosRegistrationKey = CompetiosRegistrationKey(replacement)
 	case "invitee":
 		value.CompetiosInviteeKey = CompetiosInviteeKey(replacement)
+	case "lifecycle revision":
+		value.CompetiosEntryLifecycleRevision = CompetiosEntryLifecycleRevision(replacement)
+	}
+}
+
+func assertInvalid(t *testing.T, err error) {
+	t.Helper()
+	if !errors.Is(err, ErrInvalidCompetiosAttendanceRequest) {
+		t.Fatalf("error = %v, want ErrInvalidCompetiosAttendanceRequest", err)
 	}
 }
 

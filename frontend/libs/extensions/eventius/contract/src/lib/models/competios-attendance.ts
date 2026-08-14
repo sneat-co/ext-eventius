@@ -16,13 +16,16 @@ export interface ICompetiosAttendanceResponderRef {
   readonly accountID: string;
 }
 
+/** Matches the frozen CalendarEventRef TypeSpec model. */
+export interface ICompetiosAttendanceCalendarEventRef {
+  readonly spaceID: string;
+  readonly happeningID: string;
+}
+
 export interface IEnsureCompetiosAttendanceEventRequest {
   readonly requestID: string;
   readonly competiosEventKey: string;
-  readonly calendarEvent: {
-    readonly spaceID: string;
-    readonly happeningID: string;
-  };
+  readonly calendarEvent: ICompetiosAttendanceCalendarEventRef;
 }
 
 export interface IEnsureCompetiosAttendanceInvitationRequest {
@@ -32,8 +35,27 @@ export interface IEnsureCompetiosAttendanceInvitationRequest {
   readonly competiosTournamentKey: string;
   readonly competiosCompetitionKey: string;
   readonly competiosEntryKey: string;
-  /** Opaque identity of one invitee and its Competios lifecycle revision. */
+  /**
+   * Legacy shape: providers must reject it because it cannot identify one
+   * invitee lifecycle. Use IEnsureCompetiosAttendanceInviteeInvitationRequest.
+   */
+  readonly responder: ICompetiosAttendanceResponderRef;
+}
+
+/** Exact idempotent ensure command for one invitee lifecycle. */
+export interface IEnsureCompetiosAttendanceInviteeInvitationRequest {
+  readonly requestID: string;
+  readonly attendanceEventID: string;
+  /** The provider must verify this correlates with attendanceEventID. */
+  readonly competiosEventKey: string;
+  readonly competiosTournamentKey: string;
+  readonly competiosCompetitionKey: string;
+  readonly competiosEntryKey: string;
+  readonly competiosRegistrationKey: string;
+  /** Opaque identity of one invitee. */
   readonly competiosInviteeKey: string;
+  /** Opaque Competios revision for this Entry invitation lifecycle. */
+  readonly competiosEntryLifecycleRevision: string;
   readonly responder: ICompetiosAttendanceResponderRef;
 }
 
@@ -45,6 +67,7 @@ export interface IGetCompetiosAttendanceInviteeStatusRequest {
   readonly competiosEntryKey: string;
   readonly competiosRegistrationKey: string;
   readonly competiosInviteeKey: string;
+  readonly competiosEntryLifecycleRevision: string;
 }
 
 export interface ICompetiosAttendanceStatus {
@@ -54,6 +77,7 @@ export interface ICompetiosAttendanceStatus {
   readonly competiosCompetitionKey?: string;
   readonly competiosEntryKey?: string;
   readonly competiosInviteeKey?: string;
+  readonly competiosEntryLifecycleRevision?: string;
   readonly attendanceEventID: string;
   readonly attendanceInvitationID?: string;
   readonly eventState: CompetiosAttendanceEventState;

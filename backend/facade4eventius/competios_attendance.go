@@ -9,10 +9,21 @@ import (
 	"github.com/sneat-co/ext-eventius/backend/participation"
 )
 
-// ErrInvalidCompetiosAttendanceRequest means a caller supplied an incomplete
-// or unsafe cross-product attendance request. Implementations must reject it
-// before allocating any Eventius record.
-var ErrInvalidCompetiosAttendanceRequest = errors.New("eventius: invalid Competios attendance request")
+var (
+	// ErrInvalidCompetiosAttendanceRequest means a caller supplied an incomplete
+	// or unsafe cross-product attendance request. Implementations must reject it
+	// before allocating any Eventius record.
+	ErrInvalidCompetiosAttendanceRequest = errors.New("eventius: invalid Competios attendance request")
+
+	// ErrLegacyCompetiosAttendanceEnsureUnsupported prevents a legacy ensure
+	// request from silently collapsing multiple invitee lifecycles into one
+	// invitation. Callers must use the additive exact-invitee provider capability.
+	ErrLegacyCompetiosAttendanceEnsureUnsupported = errors.New("eventius: legacy Competios attendance ensure is unsupported")
+
+	// ErrAmbiguousCompetiosAttendanceLookup prevents the legacy
+	// registration-only lookup from selecting an arbitrary invitee.
+	ErrAmbiguousCompetiosAttendanceLookup = errors.New("eventius: ambiguous Competios attendance lookup")
+)
 
 // CompetiosEventKey is the opaque external identity that makes Ensure calls
 // idempotent. Eventius never parses it or treats it as a public URL.
@@ -26,12 +37,14 @@ type CompetiosEntryKey string
 type CompetiosRegistrationKey string
 
 // CompetiosInviteeKey is the opaque identity of exactly one invitee within an
-// enrolled Competios Entry. Competios owns its construction and may encode the
-// Entry lifecycle revision in it; Eventius MUST treat it as an unparsed opaque
-// value. Together with the Event, Tournament, Competition, Entry and
-// Registration keys, it makes an attendance invitation idempotent per invitee
-// lifecycle.
+// enrolled Competios Entry. Eventius stores and compares it but never parses it.
 type CompetiosInviteeKey string
+
+// CompetiosEntryLifecycleRevision is an opaque Competios value that changes
+// whenever an Entry lifecycle creates a distinct invitation lifecycle. It is
+// required separately from CompetiosInviteeKey so the idempotency tuple is
+// explicit and independently auditable.
+type CompetiosEntryLifecycleRevision string
 
 // AttendanceEventID and AttendanceInvitationID are Eventius-owned opaque
 // identities. They deliberately cannot be substituted for one another.
@@ -89,10 +102,11 @@ type EnsureAttendanceEventRequest struct {
 	CalendarEvent     CalendarEventRef  `json:"calendarEvent"`
 }
 
-// EnsureAttendanceInvitationRequest makes one attendance invitation for a
-// confirmed registration and one invitee lifecycle. No RSVP token belongs to
-// this cross-product contract: any token is Eventius transport authority and
-// must remain private to Eventius.
+// EnsureAttendanceInvitationRequest is the retained legacy request shape.
+// It cannot identify one invitee lifecycle, so providers MUST fail closed with
+// ErrLegacyCompetiosAttendanceEnsureUnsupported. New callers must use
+// EnsureAttendanceInviteeInvitationRequest through
+// CompetiosAttendanceInviteeStatusService.
 type EnsureAttendanceInvitationRequest struct {
 	RequestID                string                   `json:"requestID"`
 	AttendanceEventID        AttendanceEventID        `json:"attendanceEventID"`
@@ -100,38 +114,57 @@ type EnsureAttendanceInvitationRequest struct {
 	CompetiosTournamentKey   CompetiosTournamentKey   `json:"competiosTournamentKey"`
 	CompetiosCompetitionKey  CompetiosCompetitionKey  `json:"competiosCompetitionKey"`
 	CompetiosEntryKey        CompetiosEntryKey        `json:"competiosEntryKey"`
-	CompetiosInviteeKey      CompetiosInviteeKey      `json:"competiosInviteeKey"`
 	Responder                AttendanceResponderRef   `json:"responder"`
+}
+
+// EnsureAttendanceInviteeInvitationRequest makes one attendance invitation
+// for exactly one enrolled invitee lifecycle. The provider MUST verify that
+// CompetiosEventKey is correlated to AttendanceEventID before creating or
+// returning an invitation; a mismatched pair is rejected. No RSVP token,
+// contact, or payment value belongs to this cross-product contract.
+type EnsureAttendanceInviteeInvitationRequest struct {
+	RequestID                       string                          `json:"requestID"`
+	AttendanceEventID               AttendanceEventID               `json:"attendanceEventID"`
+	CompetiosEventKey               CompetiosEventKey               `json:"competiosEventKey"`
+	CompetiosTournamentKey          CompetiosTournamentKey          `json:"competiosTournamentKey"`
+	CompetiosCompetitionKey         CompetiosCompetitionKey         `json:"competiosCompetitionKey"`
+	CompetiosEntryKey               CompetiosEntryKey               `json:"competiosEntryKey"`
+	CompetiosRegistrationKey        CompetiosRegistrationKey        `json:"competiosRegistrationKey"`
+	CompetiosInviteeKey             CompetiosInviteeKey             `json:"competiosInviteeKey"`
+	CompetiosEntryLifecycleRevision CompetiosEntryLifecycleRevision `json:"competiosEntryLifecycleRevision"`
+	Responder                       AttendanceResponderRef          `json:"responder"`
 }
 
 // GetAttendanceInviteeStatusRequest identifies exactly one safe invitation
 // status projection. It has no token, contact, payment, or response-detail
-// fields. Eventius MUST NOT parse CompetiosInviteeKey.
+// fields. Eventius MUST NOT parse its opaque Competios values.
 type GetAttendanceInviteeStatusRequest struct {
-	CompetiosEventKey        CompetiosEventKey        `json:"competiosEventKey"`
-	CompetiosTournamentKey   CompetiosTournamentKey   `json:"competiosTournamentKey"`
-	CompetiosCompetitionKey  CompetiosCompetitionKey  `json:"competiosCompetitionKey"`
-	CompetiosEntryKey        CompetiosEntryKey        `json:"competiosEntryKey"`
-	CompetiosRegistrationKey CompetiosRegistrationKey `json:"competiosRegistrationKey"`
-	CompetiosInviteeKey      CompetiosInviteeKey      `json:"competiosInviteeKey"`
+	CompetiosEventKey               CompetiosEventKey               `json:"competiosEventKey"`
+	CompetiosTournamentKey          CompetiosTournamentKey          `json:"competiosTournamentKey"`
+	CompetiosCompetitionKey         CompetiosCompetitionKey         `json:"competiosCompetitionKey"`
+	CompetiosEntryKey               CompetiosEntryKey               `json:"competiosEntryKey"`
+	CompetiosRegistrationKey        CompetiosRegistrationKey        `json:"competiosRegistrationKey"`
+	CompetiosInviteeKey             CompetiosInviteeKey             `json:"competiosInviteeKey"`
+	CompetiosEntryLifecycleRevision CompetiosEntryLifecycleRevision `json:"competiosEntryLifecycleRevision"`
 }
 
 // AttendanceStatusProjection is safe to return to Competios. It intentionally
 // omits invitation URLs, RSVP tokens, invitee names, contact fields, and any
 // other authority-bearing data.
 type AttendanceStatusProjection struct {
-	CompetiosEventKey        CompetiosEventKey         `json:"competiosEventKey"`
-	CompetiosRegistrationKey CompetiosRegistrationKey  `json:"competiosRegistrationKey,omitempty"`
-	CompetiosTournamentKey   CompetiosTournamentKey    `json:"competiosTournamentKey,omitempty"`
-	CompetiosCompetitionKey  CompetiosCompetitionKey   `json:"competiosCompetitionKey,omitempty"`
-	CompetiosEntryKey        CompetiosEntryKey         `json:"competiosEntryKey,omitempty"`
-	CompetiosInviteeKey      CompetiosInviteeKey       `json:"competiosInviteeKey,omitempty"`
-	AttendanceEventID        AttendanceEventID         `json:"attendanceEventID"`
-	AttendanceInvitationID   AttendanceInvitationID    `json:"attendanceInvitationID,omitempty"`
-	EventState               AttendanceEventState      `json:"eventState"`
-	InvitationState          AttendanceInvitationState `json:"invitationState,omitempty"`
-	Response                 *participation.Coarse     `json:"response,omitempty"`
-	RespondedAt              *time.Time                `json:"respondedAt,omitempty"`
+	CompetiosEventKey               CompetiosEventKey               `json:"competiosEventKey"`
+	CompetiosRegistrationKey        CompetiosRegistrationKey        `json:"competiosRegistrationKey,omitempty"`
+	CompetiosTournamentKey          CompetiosTournamentKey          `json:"competiosTournamentKey,omitempty"`
+	CompetiosCompetitionKey         CompetiosCompetitionKey         `json:"competiosCompetitionKey,omitempty"`
+	CompetiosEntryKey               CompetiosEntryKey               `json:"competiosEntryKey,omitempty"`
+	CompetiosInviteeKey             CompetiosInviteeKey             `json:"competiosInviteeKey,omitempty"`
+	CompetiosEntryLifecycleRevision CompetiosEntryLifecycleRevision `json:"competiosEntryLifecycleRevision,omitempty"`
+	AttendanceEventID               AttendanceEventID               `json:"attendanceEventID"`
+	AttendanceInvitationID          AttendanceInvitationID          `json:"attendanceInvitationID,omitempty"`
+	EventState                      AttendanceEventState            `json:"eventState"`
+	InvitationState                 AttendanceInvitationState       `json:"invitationState,omitempty"`
+	Response                        *participation.Coarse           `json:"response,omitempty"`
+	RespondedAt                     *time.Time                      `json:"respondedAt,omitempty"`
 }
 
 func ValidateEnsureAttendanceEventRequest(value EnsureAttendanceEventRequest) error {
@@ -141,8 +174,15 @@ func ValidateEnsureAttendanceEventRequest(value EnsureAttendanceEventRequest) er
 	return nil
 }
 
-func ValidateEnsureAttendanceInvitationRequest(value EnsureAttendanceInvitationRequest) error {
-	if strings.TrimSpace(value.RequestID) == "" || strings.TrimSpace(string(value.AttendanceEventID)) == "" || strings.TrimSpace(string(value.CompetiosRegistrationKey)) == "" || strings.TrimSpace(string(value.CompetiosTournamentKey)) == "" || strings.TrimSpace(string(value.CompetiosCompetitionKey)) == "" || strings.TrimSpace(string(value.CompetiosEntryKey)) == "" || strings.TrimSpace(string(value.CompetiosInviteeKey)) == "" || strings.TrimSpace(value.Responder.AccountID) == "" {
+// ValidateEnsureAttendanceInvitationRequest is intentionally fail-closed;
+// validating legacy field presence cannot make its omitted invitee lifecycle
+// identity safe.
+func ValidateEnsureAttendanceInvitationRequest(EnsureAttendanceInvitationRequest) error {
+	return ErrLegacyCompetiosAttendanceEnsureUnsupported
+}
+
+func ValidateEnsureAttendanceInviteeInvitationRequest(value EnsureAttendanceInviteeInvitationRequest) error {
+	if strings.TrimSpace(value.RequestID) == "" || strings.TrimSpace(string(value.AttendanceEventID)) == "" || !hasCompleteInviteeTuple(value.CompetiosEventKey, value.CompetiosTournamentKey, value.CompetiosCompetitionKey, value.CompetiosEntryKey, value.CompetiosRegistrationKey, value.CompetiosInviteeKey, value.CompetiosEntryLifecycleRevision) || strings.TrimSpace(value.Responder.AccountID) == "" {
 		return ErrInvalidCompetiosAttendanceRequest
 	}
 	if value.Responder.Kind != AttendanceResponderAccount && value.Responder.Kind != AttendanceResponderGuardian {
@@ -154,7 +194,7 @@ func ValidateEnsureAttendanceInvitationRequest(value EnsureAttendanceInvitationR
 // ValidateGetAttendanceInviteeStatusRequest rejects a partial external tuple
 // so a provider cannot choose an arbitrary invitee for a shared registration.
 func ValidateGetAttendanceInviteeStatusRequest(value GetAttendanceInviteeStatusRequest) error {
-	if strings.TrimSpace(string(value.CompetiosEventKey)) == "" || strings.TrimSpace(string(value.CompetiosTournamentKey)) == "" || strings.TrimSpace(string(value.CompetiosCompetitionKey)) == "" || strings.TrimSpace(string(value.CompetiosEntryKey)) == "" || strings.TrimSpace(string(value.CompetiosRegistrationKey)) == "" || strings.TrimSpace(string(value.CompetiosInviteeKey)) == "" {
+	if !hasCompleteInviteeTuple(value.CompetiosEventKey, value.CompetiosTournamentKey, value.CompetiosCompetitionKey, value.CompetiosEntryKey, value.CompetiosRegistrationKey, value.CompetiosInviteeKey, value.CompetiosEntryLifecycleRevision) {
 		return ErrInvalidCompetiosAttendanceRequest
 	}
 	return nil
@@ -167,33 +207,47 @@ func ValidateAttendanceStatusProjection(value AttendanceStatusProjection) error 
 	if value.EventState != AttendanceEventActive && value.EventState != AttendanceEventCancelled {
 		return ErrInvalidCompetiosAttendanceRequest
 	}
-	if value.AttendanceInvitationID == "" {
-		if value.CompetiosRegistrationKey != "" || value.CompetiosTournamentKey != "" || value.CompetiosCompetitionKey != "" || value.CompetiosEntryKey != "" || value.CompetiosInviteeKey != "" || value.InvitationState != "" || value.Response != nil || value.RespondedAt != nil {
+	if strings.TrimSpace(string(value.AttendanceInvitationID)) == "" {
+		if hasAnyInviteeTuple(value) || value.InvitationState != "" || value.Response != nil || value.RespondedAt != nil {
 			return ErrInvalidCompetiosAttendanceRequest
 		}
 		return nil
 	}
-	if strings.TrimSpace(string(value.CompetiosRegistrationKey)) == "" || strings.TrimSpace(string(value.CompetiosTournamentKey)) == "" || strings.TrimSpace(string(value.CompetiosCompetitionKey)) == "" || strings.TrimSpace(string(value.CompetiosEntryKey)) == "" || strings.TrimSpace(string(value.CompetiosInviteeKey)) == "" || (value.InvitationState != AttendanceInvitationActive && value.InvitationState != AttendanceInvitationRevoked) {
+	if !hasCompleteInviteeTuple(value.CompetiosEventKey, value.CompetiosTournamentKey, value.CompetiosCompetitionKey, value.CompetiosEntryKey, value.CompetiosRegistrationKey, value.CompetiosInviteeKey, value.CompetiosEntryLifecycleRevision) || (value.InvitationState != AttendanceInvitationActive && value.InvitationState != AttendanceInvitationRevoked) {
+		return ErrInvalidCompetiosAttendanceRequest
+	}
+	if value.EventState == AttendanceEventCancelled && value.InvitationState == AttendanceInvitationActive {
 		return ErrInvalidCompetiosAttendanceRequest
 	}
 	if value.Response != nil && !value.Response.IsValid() {
 		return ErrInvalidCompetiosAttendanceRequest
 	}
-	if value.RespondedAt != nil && value.Response == nil {
+	if (value.Response == nil) != (value.RespondedAt == nil) {
+		return ErrInvalidCompetiosAttendanceRequest
+	}
+	if value.RespondedAt != nil && (value.RespondedAt.IsZero() || value.RespondedAt.Location() != time.UTC) {
 		return ErrInvalidCompetiosAttendanceRequest
 	}
 	return nil
 }
 
-// CompetiosAttendanceService is the narrow provider port used by Competios.
-// Eventius remains the sole authority for attendance, invitations and RSVP
-// submission; Competios can only ensure/revoke/cancel and query the safe
-// projection. Implementations must make both Ensure operations idempotent.
+func hasCompleteInviteeTuple(event CompetiosEventKey, tournament CompetiosTournamentKey, competition CompetiosCompetitionKey, entry CompetiosEntryKey, registration CompetiosRegistrationKey, invitee CompetiosInviteeKey, lifecycleRevision CompetiosEntryLifecycleRevision) bool {
+	return strings.TrimSpace(string(event)) != "" && strings.TrimSpace(string(tournament)) != "" && strings.TrimSpace(string(competition)) != "" && strings.TrimSpace(string(entry)) != "" && strings.TrimSpace(string(registration)) != "" && strings.TrimSpace(string(invitee)) != "" && strings.TrimSpace(string(lifecycleRevision)) != ""
+}
+
+func hasAnyInviteeTuple(value AttendanceStatusProjection) bool {
+	return value.CompetiosRegistrationKey != "" || value.CompetiosTournamentKey != "" || value.CompetiosCompetitionKey != "" || value.CompetiosEntryKey != "" || value.CompetiosInviteeKey != "" || value.CompetiosEntryLifecycleRevision != ""
+}
+
+// CompetiosAttendanceService is the retained narrow provider port used by
+// existing callers. Eventius remains the sole authority for attendance,
+// invitations and RSVP submission.
 //
-// GetAttendanceStatus is retained for existing registration-only callers. It
-// MUST fail rather than choose a status if that registration can name multiple
-// invitees. New integrations that need an event-only status or one invitation
-// MUST use CompetiosAttendanceInviteeStatusService.
+// EnsureAttendanceInvitation MUST return
+// ErrLegacyCompetiosAttendanceEnsureUnsupported. GetAttendanceStatus MUST
+// return ErrAmbiguousCompetiosAttendanceLookup whenever its registration can
+// name zero or multiple invitee lifecycles. New callers MUST use the additive
+// CompetiosAttendanceInviteeStatusService capability.
 type CompetiosAttendanceService interface {
 	EnsureAttendanceEvent(ctx context.Context, servicePrincipalID string, request EnsureAttendanceEventRequest) (AttendanceStatusProjection, error)
 	EnsureAttendanceInvitation(ctx context.Context, servicePrincipalID string, request EnsureAttendanceInvitationRequest) (AttendanceStatusProjection, error)
@@ -205,11 +259,11 @@ type CompetiosAttendanceService interface {
 // CompetiosAttendanceInviteeStatusService is an additive provider capability;
 // it deliberately does not change CompetiosAttendanceService, so existing
 // providers remain source-compatible. GetAttendanceEventStatus returns an
-// event-only projection with no invitation tuple. GetAttendanceInviteeStatus
-// returns the projection for exactly the complete external tuple supplied in
-// request; it must validate that tuple and must never select another invitee.
+// event-only projection with no invitation tuple. The exact ensure and lookup
+// methods require the complete external tuple and never select another invitee.
 type CompetiosAttendanceInviteeStatusService interface {
 	CompetiosAttendanceService
+	EnsureAttendanceInviteeInvitation(ctx context.Context, servicePrincipalID string, request EnsureAttendanceInviteeInvitationRequest) (AttendanceStatusProjection, error)
 	GetAttendanceEventStatus(ctx context.Context, servicePrincipalID string, eventKey CompetiosEventKey) (AttendanceStatusProjection, error)
 	GetAttendanceInviteeStatus(ctx context.Context, servicePrincipalID string, request GetAttendanceInviteeStatusRequest) (AttendanceStatusProjection, error)
 }

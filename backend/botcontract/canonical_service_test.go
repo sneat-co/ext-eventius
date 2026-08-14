@@ -18,4 +18,8 @@ func TestCanonicalAliasesPreserveTheFacadeVocabulary(t *testing.T) {
 	if facade4eventius.CompetiosInviteeKey(inviteeKey) != "competios:invitee@entry-revision" {
 		t.Fatal("bot contract must retain the canonical Competios invitee key")
 	}
+	lifecycleRevision := CompetiosEntryLifecycleRevision("entry-revision")
+	if facade4eventius.CompetiosEntryLifecycleRevision(lifecycleRevision) != "entry-revision" {
+		t.Fatal("bot contract must retain the canonical Entry lifecycle revision")
+	}
 }

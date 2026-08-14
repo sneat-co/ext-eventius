@@ -96,12 +96,13 @@ Nx workspace whose `ext-eventius-contract` project publishes
 the published TypeScript mirror is in `frontend/`. The contract transfers no
 RSVP token, URL, contact, invitee name, or payment data.
 
-An attendance invitation is identified by the Event, Tournament, Competition,
-Entry, registration and an opaque `CompetiosInviteeKey`. Competios may encode
-the Entry lifecycle revision in that last value; Eventius compares it only as
-an opaque string. `CompetiosAttendanceService.GetAttendanceStatus` remains for
-legacy registration-only consumers and must fail closed when a registration is
-not uniquely one invitee. New consumers opt into
-`CompetiosAttendanceInviteeStatusService`: `GetAttendanceEventStatus` returns
-only event status, while `GetAttendanceInviteeStatus` requires the complete
-tuple and returns exactly one safe invitation projection.
+An exact attendance invitation is identified by the Event, Tournament,
+Competition, Entry, registration, opaque `CompetiosInviteeKey`, and opaque
+`CompetiosEntryLifecycleRevision`; Eventius compares both opaque values only.
+The provider verifies that `CompetiosEventKey` matches `AttendanceEventID`.
+`CompetiosAttendanceService.EnsureAttendanceInvitation` is retained but fails
+closed because its legacy request cannot name an invitee lifecycle, and its
+registration-only lookup returns `ErrAmbiguousCompetiosAttendanceLookup` rather
+than choose among multiple invitees. New consumers opt into
+`CompetiosAttendanceInviteeStatusService`: its exact ensure and lookup require
+the complete tuple, while `GetAttendanceEventStatus` returns only event status.

@@ -15,11 +15,27 @@ enum AttendanceInvitationState { active, revoked }
 enum AttendanceResponse { yes, no, maybe }
 enum AttendanceResponderKind { account, guardian }
 
+model CalendarEventRef {
+  spaceID: string;
+  happeningID: string;
+}
+
 model AttendanceResponderRef {
   kind: AttendanceResponderKind;
   accountID: string;
 }
 
+/** Ensures one Eventius attendance occasion for the already scheduled event. */
+model EnsureAttendanceEventRequest {
+  requestID: string;
+  competiosEventKey: string;
+  calendarEvent: CalendarEventRef;
+}
+
+/**
+ * Retained legacy shape. Providers reject it because no invitee/lifecycle
+ * identity is present; use EnsureAttendanceInviteeInvitationRequest instead.
+ */
 model EnsureAttendanceInvitationRequest {
   requestID: string;
   attendanceEventID: string;
@@ -27,10 +43,22 @@ model EnsureAttendanceInvitationRequest {
   competiosTournamentKey: string;
   competiosCompetitionKey: string;
   competiosEntryKey: string;
+  responder: AttendanceResponderRef;
+}
 
-  /** Required opaque Competios identity for one invitee lifecycle. It MAY
-   * encode the Entry lifecycle revision; Eventius never parses it. */
+/** Exact idempotent ensure command for one invitee lifecycle. The provider
+ * verifies that competiosEventKey is correlated to attendanceEventID. */
+model EnsureAttendanceInviteeInvitationRequest {
+  requestID: string;
+  attendanceEventID: string;
+  competiosEventKey: string;
+  competiosTournamentKey: string;
+  competiosCompetitionKey: string;
+  competiosEntryKey: string;
+  competiosRegistrationKey: string;
   competiosInviteeKey: string;
+  /** Opaque Competios lifecycle revision. Eventius never parses it. */
+  competiosEntryLifecycleRevision: string;
   responder: AttendanceResponderRef;
 }
 
@@ -42,10 +70,12 @@ model GetAttendanceInviteeStatusRequest {
   competiosEntryKey: string;
   competiosRegistrationKey: string;
   competiosInviteeKey: string;
+  competiosEntryLifecycleRevision: string;
 }
 
 /** Event-only projections omit every invitation tuple field; an invitation
- * projection contains the complete external tuple. */
+ * projection contains the complete external tuple. answered responses have a
+ * non-zero UTC respondedAt; revoked answered responses remain valid. */
 model AttendanceStatusProjection {
   competiosEventKey: string;
   competiosTournamentKey?: string;
@@ -53,6 +83,7 @@ model AttendanceStatusProjection {
   competiosEntryKey?: string;
   competiosRegistrationKey?: string;
   competiosInviteeKey?: string;
+  competiosEntryLifecycleRevision?: string;
   attendanceEventID: string;
   attendanceInvitationID?: string;
   eventState: AttendanceEventState;
