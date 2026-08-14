@@ -8,7 +8,11 @@
     "version": {
       "conventionalCommits": true,
       "fallbackCurrentVersionResolver": "disk",
-      "preVersionCommand": "pnpm exec nx build ext-eventius-contract --skip-nx-cache"
+      "preVersionCommand": "pnpm exec nx build ext-eventius-contract --skip-nx-cache",
+      "manifestRootsToUpdate": [
+        "{projectRoot}",
+        "dist/{projectRoot}"
+      ]
     },
     "changelog": { "workspaceChangelog": true, "automaticFromRef": true },
     "publish": {
