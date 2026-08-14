@@ -16,6 +16,11 @@ import { IEventiusEventListItem } from '../models/eventius-event';
 import { IAddInviteeRequest, IInvitation } from '../models/invitation';
 import { IRsvp, IRsvpContext, ISubmitRsvpRequest } from '../models/rsvp';
 import { IRsvpLink } from '../models/rsvp-link';
+import {
+  ICompetiosAttendanceStatus,
+  IEnsureCompetiosAttendanceEventRequest,
+  IEnsureCompetiosAttendanceInvitationRequest,
+} from '../models/competios-attendance';
 
 // Runtime-light service contracts the eventius pages/space-menu depend on. Each
 // interface mirrors the public surface of the concrete service in the internal
@@ -117,3 +122,32 @@ export interface IBringAlongService {
 export const BRING_ALONG_SERVICE = new InjectionToken<IBringAlongService>(
   'BringAlongService',
 );
+
+/**
+ * Server-to-server Competios integration facade. Implementations must never
+ * expose RSVP tokens through this contract; the status is safe for Competios
+ * projections only.
+ */
+export interface ICompetiosAttendanceService {
+  ensureAttendanceEvent(
+    request: IEnsureCompetiosAttendanceEventRequest,
+  ): Observable<ICompetiosAttendanceStatus>;
+  ensureAttendanceInvitation(
+    request: IEnsureCompetiosAttendanceInvitationRequest,
+  ): Observable<ICompetiosAttendanceStatus>;
+  getAttendanceStatus(
+    competiosEventKey: string,
+    competiosRegistrationKey: string,
+  ): Observable<ICompetiosAttendanceStatus>;
+  revokeAttendanceInvitation(
+    attendanceInvitationID: string,
+    reason: string,
+  ): Observable<ICompetiosAttendanceStatus>;
+  cancelAttendanceEvent(
+    attendanceEventID: string,
+    reason: string,
+  ): Observable<ICompetiosAttendanceStatus>;
+}
+
+export const COMPETIOS_ATTENDANCE_SERVICE =
+  new InjectionToken<ICompetiosAttendanceService>('CompetiosAttendanceService');
