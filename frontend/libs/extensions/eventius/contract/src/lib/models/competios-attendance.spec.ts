@@ -1,11 +1,15 @@
 import { describe, expect, expectTypeOf, it } from 'vitest';
 
-import type {
-  ICancelCompetiosAttendanceEventCommand,
-  ICompetiosAttendanceStatus,
-  IEnsureCompetiosAttendanceInviteeInvitationRequest,
-  IGetCompetiosAttendanceInviteeStatusRequest,
-  IRevokeCompetiosAttendanceInvitationCommand,
+import {
+  COMPETIOS_ATTENDANCE_COMMAND_CONFLICT_CODE,
+  COMPETIOS_ATTENDANCE_ID_MAX_UTF8_BYTES,
+  COMPETIOS_ATTENDANCE_REASON_MAX_UTF8_BYTES,
+  type ICompetiosAttendanceCommandBinding,
+  type ICancelCompetiosAttendanceEventCommand,
+  type ICompetiosAttendanceStatus,
+  type IEnsureCompetiosAttendanceInviteeInvitationRequest,
+  type IGetCompetiosAttendanceInviteeStatusRequest,
+  type IRevokeCompetiosAttendanceInvitationCommand,
 } from './competios-attendance';
 
 describe('Competios attendance invitee contract', () => {
@@ -92,5 +96,25 @@ describe('Competios attendance invitee contract', () => {
     expect(revoke.reason).toBeTruthy();
     expect(cancel.requestID).toBeTruthy();
     expect(cancel.reason).toBeTruthy();
+  });
+
+  it('publishes bounded ID/reason and global command-conflict vocabulary', () => {
+    const status: ICompetiosAttendanceStatus = {
+      competiosEventKey: 'event-1',
+      attendanceEventID: 'eventius-event-1',
+      eventState: 'active',
+    };
+    const binding: ICompetiosAttendanceCommandBinding = {
+      servicePrincipalID: 'competios-production',
+      requestID: 'request-1',
+      operation: 'cancel_attendance_event',
+      payloadFingerprint: '0'.repeat(64),
+      projection: status,
+    };
+
+    expect(COMPETIOS_ATTENDANCE_ID_MAX_UTF8_BYTES).toBe(128);
+    expect(COMPETIOS_ATTENDANCE_REASON_MAX_UTF8_BYTES).toBe(512);
+    expect(COMPETIOS_ATTENDANCE_COMMAND_CONFLICT_CODE).toBe('command_conflict');
+    expect(binding.payloadFingerprint).toHaveLength(64);
   });
 });
