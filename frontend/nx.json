@@ -5,11 +5,14 @@
     "projectsRelationship": "fixed",
     "releaseTagPattern": "v{version}",
     "git": { "commit": true, "tag": true, "push": true },
-    "version": { "conventionalCommits": true, "fallbackCurrentVersionResolver": "disk" },
+    "version": {
+      "conventionalCommits": true,
+      "fallbackCurrentVersionResolver": "disk",
+      "preVersionCommand": "pnpm exec nx build ext-eventius-contract --skip-nx-cache"
+    },
     "changelog": { "workspaceChangelog": true, "automaticFromRef": true },
     "publish": {
       "executor": "@nx/js:release-publish",
-      "dependsOn": ["build"],
       "options": { "packageRoot": "dist/{projectRoot}", "access": "public" }
     }
   }

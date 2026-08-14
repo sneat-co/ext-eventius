@@ -10,6 +10,5 @@ jobs:
     with:
       working-directory: frontend
       install-command: pnpm install --no-frozen-lockfile --ignore-scripts
-      build-command: pnpm exec nx build ext-eventius-contract
       publish-command: pnpm exec nx release --yes && git push --follow-tags
     secrets: inherit
