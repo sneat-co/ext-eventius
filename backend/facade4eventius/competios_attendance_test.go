@@ -37,11 +37,34 @@ func TestExactInviteeRequestsAndProjectionValidate(t *testing.T) {
 	if err := ValidateGetAttendanceInviteeStatusRequest(validGetAttendanceInviteeStatusRequest()); err != nil {
 		t.Fatalf("valid exact status query: %v", err)
 	}
+	if err := ValidateRevokeAttendanceInvitationCommand(validRevokeAttendanceInvitationCommand()); err != nil {
+		t.Fatalf("valid revoke command: %v", err)
+	}
+	if err := ValidateCancelAttendanceEventCommand(validCancelAttendanceEventCommand()); err != nil {
+		t.Fatalf("valid cancel command: %v", err)
+	}
 	answer, at := participation.CoarseYes, time.Now().UTC()
 	status := validAttendanceStatusProjection()
 	status.Response, status.RespondedAt = &answer, &at
 	if err := ValidateAttendanceStatusProjection(status); err != nil {
 		t.Fatalf("valid answered projection: %v", err)
+	}
+}
+
+func TestExactAttendanceMutationCommandsRejectEveryRequiredField(t *testing.T) {
+	for _, field := range []string{"request", "attendance event", "attendance invitation", "event", "tournament", "competition", "entry", "registration", "invitee", "lifecycle revision", "reason"} {
+		t.Run("revoke rejects "+field, func(t *testing.T) {
+			command := validRevokeAttendanceInvitationCommand()
+			setRevokeField(&command, field, " ")
+			assertInvalid(t, ValidateRevokeAttendanceInvitationCommand(command))
+		})
+	}
+	for _, field := range []string{"request", "attendance event", "event", "reason"} {
+		t.Run("cancel rejects "+field, func(t *testing.T) {
+			command := validCancelAttendanceEventCommand()
+			setCancelField(&command, field, " ")
+			assertInvalid(t, ValidateCancelAttendanceEventCommand(command))
+		})
 	}
 }
 
@@ -164,6 +187,14 @@ func validGetAttendanceInviteeStatusRequest() GetAttendanceInviteeStatusRequest 
 	return GetAttendanceInviteeStatusRequest{CompetiosEventKey: "event", CompetiosTournamentKey: "tournament", CompetiosCompetitionKey: "competition", CompetiosEntryKey: "entry", CompetiosRegistrationKey: "registration", CompetiosInviteeKey: "invitee", CompetiosEntryLifecycleRevision: "revision-2"}
 }
 
+func validRevokeAttendanceInvitationCommand() RevokeAttendanceInvitationCommand {
+	return RevokeAttendanceInvitationCommand{RequestID: "revoke-1", AttendanceEventID: "eventius-event", AttendanceInvitationID: "invitation", CompetiosEventKey: "event", CompetiosTournamentKey: "tournament", CompetiosCompetitionKey: "competition", CompetiosEntryKey: "entry", CompetiosRegistrationKey: "registration", CompetiosInviteeKey: "invitee", CompetiosEntryLifecycleRevision: "revision-2", Reason: "entry withdrawn"}
+}
+
+func validCancelAttendanceEventCommand() CancelAttendanceEventCommand {
+	return CancelAttendanceEventCommand{RequestID: "cancel-1", AttendanceEventID: "eventius-event", CompetiosEventKey: "event", Reason: "competition cancelled"}
+}
+
 func validAttendanceStatusProjection() AttendanceStatusProjection {
 	return AttendanceStatusProjection{CompetiosEventKey: "event", CompetiosTournamentKey: "tournament", CompetiosCompetitionKey: "competition", CompetiosEntryKey: "entry", CompetiosRegistrationKey: "registration", CompetiosInviteeKey: "invitee", CompetiosEntryLifecycleRevision: "revision-2", AttendanceEventID: "eventius-event", AttendanceInvitationID: "invitation", EventState: AttendanceEventActive, InvitationState: AttendanceInvitationActive}
 }
@@ -223,6 +254,46 @@ func setQueryField(value *GetAttendanceInviteeStatusRequest, name, replacement s
 		value.CompetiosInviteeKey = CompetiosInviteeKey(replacement)
 	case "lifecycle revision":
 		value.CompetiosEntryLifecycleRevision = CompetiosEntryLifecycleRevision(replacement)
+	}
+}
+
+func setRevokeField(value *RevokeAttendanceInvitationCommand, name, replacement string) {
+	switch name {
+	case "request":
+		value.RequestID = replacement
+	case "attendance event":
+		value.AttendanceEventID = AttendanceEventID(replacement)
+	case "attendance invitation":
+		value.AttendanceInvitationID = AttendanceInvitationID(replacement)
+	case "event":
+		value.CompetiosEventKey = CompetiosEventKey(replacement)
+	case "tournament":
+		value.CompetiosTournamentKey = CompetiosTournamentKey(replacement)
+	case "competition":
+		value.CompetiosCompetitionKey = CompetiosCompetitionKey(replacement)
+	case "entry":
+		value.CompetiosEntryKey = CompetiosEntryKey(replacement)
+	case "registration":
+		value.CompetiosRegistrationKey = CompetiosRegistrationKey(replacement)
+	case "invitee":
+		value.CompetiosInviteeKey = CompetiosInviteeKey(replacement)
+	case "lifecycle revision":
+		value.CompetiosEntryLifecycleRevision = CompetiosEntryLifecycleRevision(replacement)
+	case "reason":
+		value.Reason = replacement
+	}
+}
+
+func setCancelField(value *CancelAttendanceEventCommand, name, replacement string) {
+	switch name {
+	case "request":
+		value.RequestID = replacement
+	case "attendance event":
+		value.AttendanceEventID = AttendanceEventID(replacement)
+	case "event":
+		value.CompetiosEventKey = CompetiosEventKey(replacement)
+	case "reason":
+		value.Reason = replacement
 	}
 }
 

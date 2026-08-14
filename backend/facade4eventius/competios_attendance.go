@@ -3,7 +3,6 @@ package facade4eventius
 import (
 	"context"
 	"errors"
-	"strings"
 	"time"
 
 	"github.com/sneat-co/ext-eventius/backend/participation"
@@ -23,6 +22,11 @@ var (
 	// ErrAmbiguousCompetiosAttendanceLookup prevents the legacy
 	// registration-only lookup from selecting an arbitrary invitee.
 	ErrAmbiguousCompetiosAttendanceLookup = errors.New("eventius: ambiguous Competios attendance lookup")
+
+	// ErrLegacyCompetiosAttendanceMutationUnsupported prevents legacy revoke
+	// and cancel methods from claiming durable caller-request idempotency when
+	// their source-compatible signatures do not carry a RequestID.
+	ErrLegacyCompetiosAttendanceMutationUnsupported = errors.New("eventius: legacy Competios attendance mutation is unsupported")
 )
 
 // CompetiosEventKey is the opaque external identity that makes Ensure calls
@@ -148,6 +152,89 @@ type GetAttendanceInviteeStatusRequest struct {
 	CompetiosEntryLifecycleRevision CompetiosEntryLifecycleRevision `json:"competiosEntryLifecycleRevision"`
 }
 
+// RevokeAttendanceInvitationCommand is the exact, durable command for one
+// invitation lifecycle. AttendanceInvitationID and the full external tuple
+// bind the target twice so a provider cannot revoke an arbitrary invitation.
+// Reason is retained in Eventius's audit trail and RequestID controls replay
+// and conflict detection.
+type RevokeAttendanceInvitationCommand struct {
+	RequestID                       string                          `json:"requestID"`
+	AttendanceEventID               AttendanceEventID               `json:"attendanceEventID"`
+	AttendanceInvitationID          AttendanceInvitationID          `json:"attendanceInvitationID"`
+	CompetiosEventKey               CompetiosEventKey               `json:"competiosEventKey"`
+	CompetiosTournamentKey          CompetiosTournamentKey          `json:"competiosTournamentKey"`
+	CompetiosCompetitionKey         CompetiosCompetitionKey         `json:"competiosCompetitionKey"`
+	CompetiosEntryKey               CompetiosEntryKey               `json:"competiosEntryKey"`
+	CompetiosRegistrationKey        CompetiosRegistrationKey        `json:"competiosRegistrationKey"`
+	CompetiosInviteeKey             CompetiosInviteeKey             `json:"competiosInviteeKey"`
+	CompetiosEntryLifecycleRevision CompetiosEntryLifecycleRevision `json:"competiosEntryLifecycleRevision"`
+	Reason                          string                          `json:"reason"`
+}
+
+// ValidateRevokeAttendanceInvitationTarget verifies the stored invitation
+// selected for a revoke before any mutation. The stored projection must prove
+// all three correlations: Eventius invitation parent to AttendanceEventID,
+// AttendanceEventID to CompetiosEventKey, and the complete opaque invitee
+// lifecycle tuple. Providers MUST perform this check in the same atomic unit as
+// the command binding, state mutation, and audit write.
+func ValidateRevokeAttendanceInvitationTarget(command RevokeAttendanceInvitationCommand, stored AttendanceStatusProjection) error {
+	if err := ValidateRevokeAttendanceInvitationCommand(command); err != nil {
+		return err
+	}
+	if err := ValidateAttendanceStatusProjection(stored); err != nil {
+		return err
+	}
+	if stored.AttendanceEventID != command.AttendanceEventID {
+		return commandCorrelationError("invitation parent does not match attendance event")
+	}
+	if stored.AttendanceInvitationID != command.AttendanceInvitationID {
+		return commandCorrelationError("attendance invitation does not match")
+	}
+	if stored.CompetiosEventKey != command.CompetiosEventKey {
+		return commandCorrelationError("attendance event correlation does not match Competios event")
+	}
+	if stored.CompetiosTournamentKey != command.CompetiosTournamentKey ||
+		stored.CompetiosCompetitionKey != command.CompetiosCompetitionKey ||
+		stored.CompetiosEntryKey != command.CompetiosEntryKey ||
+		stored.CompetiosRegistrationKey != command.CompetiosRegistrationKey ||
+		stored.CompetiosInviteeKey != command.CompetiosInviteeKey ||
+		stored.CompetiosEntryLifecycleRevision != command.CompetiosEntryLifecycleRevision {
+		return commandCorrelationError("stored invitation lifecycle tuple does not match")
+	}
+	return nil
+}
+
+// CancelAttendanceEventCommand is the exact, durable command for a canonical
+// attendance bridge. CompetiosEventKey must correlate to AttendanceEventID;
+// this command never creates or modifies a Calendarius Happening.
+type CancelAttendanceEventCommand struct {
+	RequestID         string            `json:"requestID"`
+	AttendanceEventID AttendanceEventID `json:"attendanceEventID"`
+	CompetiosEventKey CompetiosEventKey `json:"competiosEventKey"`
+	Reason            string            `json:"reason"`
+}
+
+// ValidateCancelAttendanceEventTarget verifies the stored event-only bridge
+// selected for cancellation. It prevents an AttendanceEventID from being used
+// with another CompetiosEventKey. Providers perform this check in the same
+// atomic unit as command binding, cancellation, invitation suppression, and
+// audit writes.
+func ValidateCancelAttendanceEventTarget(command CancelAttendanceEventCommand, stored AttendanceStatusProjection) error {
+	if err := ValidateCancelAttendanceEventCommand(command); err != nil {
+		return err
+	}
+	if err := ValidateAttendanceStatusProjection(stored); err != nil {
+		return err
+	}
+	if stored.AttendanceInvitationID != "" {
+		return commandCorrelationError("cancel target must be an event-only projection")
+	}
+	if stored.AttendanceEventID != command.AttendanceEventID || stored.CompetiosEventKey != command.CompetiosEventKey {
+		return commandCorrelationError("attendance event correlation does not match Competios event")
+	}
+	return nil
+}
+
 // AttendanceStatusProjection is safe to return to Competios. It intentionally
 // omits invitation URLs, RSVP tokens, invitee names, contact fields, and any
 // other authority-bearing data.
@@ -168,7 +255,7 @@ type AttendanceStatusProjection struct {
 }
 
 func ValidateEnsureAttendanceEventRequest(value EnsureAttendanceEventRequest) error {
-	if strings.TrimSpace(value.RequestID) == "" || strings.TrimSpace(string(value.CompetiosEventKey)) == "" || strings.TrimSpace(value.CalendarEvent.SpaceID) == "" || strings.TrimSpace(value.CalendarEvent.HappeningID) == "" {
+	if !validAttendanceID(value.RequestID) || !validAttendanceID(string(value.CompetiosEventKey)) || !validAttendanceID(value.CalendarEvent.SpaceID) || !validAttendanceID(value.CalendarEvent.HappeningID) {
 		return ErrInvalidCompetiosAttendanceRequest
 	}
 	return nil
@@ -182,7 +269,7 @@ func ValidateEnsureAttendanceInvitationRequest(EnsureAttendanceInvitationRequest
 }
 
 func ValidateEnsureAttendanceInviteeInvitationRequest(value EnsureAttendanceInviteeInvitationRequest) error {
-	if strings.TrimSpace(value.RequestID) == "" || strings.TrimSpace(string(value.AttendanceEventID)) == "" || !hasCompleteInviteeTuple(value.CompetiosEventKey, value.CompetiosTournamentKey, value.CompetiosCompetitionKey, value.CompetiosEntryKey, value.CompetiosRegistrationKey, value.CompetiosInviteeKey, value.CompetiosEntryLifecycleRevision) || strings.TrimSpace(value.Responder.AccountID) == "" {
+	if !validAttendanceID(value.RequestID) || !validAttendanceID(string(value.AttendanceEventID)) || !hasCompleteInviteeTuple(value.CompetiosEventKey, value.CompetiosTournamentKey, value.CompetiosCompetitionKey, value.CompetiosEntryKey, value.CompetiosRegistrationKey, value.CompetiosInviteeKey, value.CompetiosEntryLifecycleRevision) || !validAttendanceID(value.Responder.AccountID) {
 		return ErrInvalidCompetiosAttendanceRequest
 	}
 	if value.Responder.Kind != AttendanceResponderAccount && value.Responder.Kind != AttendanceResponderGuardian {
@@ -200,18 +287,35 @@ func ValidateGetAttendanceInviteeStatusRequest(value GetAttendanceInviteeStatusR
 	return nil
 }
 
+func ValidateRevokeAttendanceInvitationCommand(value RevokeAttendanceInvitationCommand) error {
+	if !validAttendanceID(value.RequestID) || !validAttendanceID(string(value.AttendanceEventID)) || !validAttendanceID(string(value.AttendanceInvitationID)) || !validAttendanceReason(value.Reason) || !hasCompleteInviteeTuple(value.CompetiosEventKey, value.CompetiosTournamentKey, value.CompetiosCompetitionKey, value.CompetiosEntryKey, value.CompetiosRegistrationKey, value.CompetiosInviteeKey, value.CompetiosEntryLifecycleRevision) {
+		return ErrInvalidCompetiosAttendanceRequest
+	}
+	return nil
+}
+
+func ValidateCancelAttendanceEventCommand(value CancelAttendanceEventCommand) error {
+	if !validAttendanceID(value.RequestID) || !validAttendanceID(string(value.AttendanceEventID)) || !validAttendanceID(string(value.CompetiosEventKey)) || !validAttendanceReason(value.Reason) {
+		return ErrInvalidCompetiosAttendanceRequest
+	}
+	return nil
+}
+
 func ValidateAttendanceStatusProjection(value AttendanceStatusProjection) error {
-	if strings.TrimSpace(string(value.CompetiosEventKey)) == "" || strings.TrimSpace(string(value.AttendanceEventID)) == "" {
+	if !validAttendanceID(string(value.CompetiosEventKey)) || !validAttendanceID(string(value.AttendanceEventID)) {
 		return ErrInvalidCompetiosAttendanceRequest
 	}
 	if value.EventState != AttendanceEventActive && value.EventState != AttendanceEventCancelled {
 		return ErrInvalidCompetiosAttendanceRequest
 	}
-	if strings.TrimSpace(string(value.AttendanceInvitationID)) == "" {
+	if value.AttendanceInvitationID == "" {
 		if hasAnyInviteeTuple(value) || value.InvitationState != "" || value.Response != nil || value.RespondedAt != nil {
 			return ErrInvalidCompetiosAttendanceRequest
 		}
 		return nil
+	}
+	if !validAttendanceID(string(value.AttendanceInvitationID)) {
+		return ErrInvalidCompetiosAttendanceRequest
 	}
 	if !hasCompleteInviteeTuple(value.CompetiosEventKey, value.CompetiosTournamentKey, value.CompetiosCompetitionKey, value.CompetiosEntryKey, value.CompetiosRegistrationKey, value.CompetiosInviteeKey, value.CompetiosEntryLifecycleRevision) || (value.InvitationState != AttendanceInvitationActive && value.InvitationState != AttendanceInvitationRevoked) {
 		return ErrInvalidCompetiosAttendanceRequest
@@ -232,7 +336,7 @@ func ValidateAttendanceStatusProjection(value AttendanceStatusProjection) error 
 }
 
 func hasCompleteInviteeTuple(event CompetiosEventKey, tournament CompetiosTournamentKey, competition CompetiosCompetitionKey, entry CompetiosEntryKey, registration CompetiosRegistrationKey, invitee CompetiosInviteeKey, lifecycleRevision CompetiosEntryLifecycleRevision) bool {
-	return strings.TrimSpace(string(event)) != "" && strings.TrimSpace(string(tournament)) != "" && strings.TrimSpace(string(competition)) != "" && strings.TrimSpace(string(entry)) != "" && strings.TrimSpace(string(registration)) != "" && strings.TrimSpace(string(invitee)) != "" && strings.TrimSpace(string(lifecycleRevision)) != ""
+	return validAttendanceID(string(event)) && validAttendanceID(string(tournament)) && validAttendanceID(string(competition)) && validAttendanceID(string(entry)) && validAttendanceID(string(registration)) && validAttendanceID(string(invitee)) && validAttendanceID(string(lifecycleRevision))
 }
 
 func hasAnyInviteeTuple(value AttendanceStatusProjection) bool {
@@ -244,7 +348,9 @@ func hasAnyInviteeTuple(value AttendanceStatusProjection) bool {
 // invitations and RSVP submission.
 //
 // EnsureAttendanceInvitation MUST return
-// ErrLegacyCompetiosAttendanceEnsureUnsupported. GetAttendanceStatus MUST
+// ErrLegacyCompetiosAttendanceEnsureUnsupported. RevokeAttendanceInvitation
+// and CancelAttendanceEvent MUST return
+// ErrLegacyCompetiosAttendanceMutationUnsupported. GetAttendanceStatus MUST
 // return ErrAmbiguousCompetiosAttendanceLookup whenever its registration can
 // name zero or multiple invitee lifecycles. New callers MUST use the additive
 // CompetiosAttendanceInviteeStatusService capability.
@@ -266,4 +372,25 @@ type CompetiosAttendanceInviteeStatusService interface {
 	EnsureAttendanceInviteeInvitation(ctx context.Context, servicePrincipalID string, request EnsureAttendanceInviteeInvitationRequest) (AttendanceStatusProjection, error)
 	GetAttendanceEventStatus(ctx context.Context, servicePrincipalID string, eventKey CompetiosEventKey) (AttendanceStatusProjection, error)
 	GetAttendanceInviteeStatus(ctx context.Context, servicePrincipalID string, request GetAttendanceInviteeStatusRequest) (AttendanceStatusProjection, error)
+}
+
+// CompetiosAttendanceCommandService is the additive exact-command capability.
+// Unlike the retained legacy mutation methods, every state-changing operation
+// carries a caller supplied RequestID and a sufficient target correlation for
+// durable replay/conflict handling.
+//
+// Normative command semantics apply globally across EnsureAttendanceEvent,
+// EnsureAttendanceInviteeInvitation, RevokeAttendanceInvitationCommand, and
+// CancelAttendanceEventCommand. Before mutation, a provider atomically reads or
+// creates the binding keyed by (servicePrincipalID, RequestID). A new binding
+// records the stable operation name and canonical full-payload fingerprint in
+// the same atomic unit as the mutation, audit, and resulting safe projection.
+// An identical replay returns that recorded projection without another mutation
+// or audit. Any changed field (including reason/target) or cross-method reuse
+// returns ErrCompetiosAttendanceCommandConflict without mutation. Providers
+// validate servicePrincipalID and each request before reading or writing state.
+type CompetiosAttendanceCommandService interface {
+	CompetiosAttendanceInviteeStatusService
+	RevokeAttendanceInvitationCommand(ctx context.Context, servicePrincipalID string, command RevokeAttendanceInvitationCommand) (AttendanceStatusProjection, error)
+	CancelAttendanceEventCommand(ctx context.Context, servicePrincipalID string, command CancelAttendanceEventCommand) (AttendanceStatusProjection, error)
 }

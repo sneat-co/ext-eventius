@@ -22,6 +22,8 @@ import {
   IEnsureCompetiosAttendanceInvitationRequest,
   IEnsureCompetiosAttendanceInviteeInvitationRequest,
   IGetCompetiosAttendanceInviteeStatusRequest,
+  IRevokeCompetiosAttendanceInvitationCommand,
+  ICancelCompetiosAttendanceEventCommand,
 } from '../models/competios-attendance';
 
 // Runtime-light service contracts the eventius pages/space-menu depend on. Each
@@ -180,4 +182,32 @@ export interface ICompetiosAttendanceInviteeStatusService
 export const COMPETIOS_ATTENDANCE_INVITEE_STATUS_SERVICE =
   new InjectionToken<ICompetiosAttendanceInviteeStatusService>(
     'CompetiosAttendanceInviteeStatusService',
+  );
+
+/**
+ * Exact durable mutation capability. The legacy revoke/cancel methods remain
+ * source-compatible only and providers must fail them closed: their signatures
+ * do not carry the RequestID needed for durable replay/conflict handling.
+ *
+ * All exact commands bind (authenticated service principal, requestID) in one
+ * global namespace to operation + canonical full-payload fingerprint. Binding,
+ * mutation, audit, and the safe result projection are atomic. A byte-identical
+ * replay returns the originally recorded projection with no second mutation or
+ * audit; changed target/reason/payload or cross-method reuse fails with the
+ * command_conflict code and writes nothing. Revoke also atomically verifies the
+ * Eventius Event correlation, invitation parent, and complete stored tuple.
+ */
+export interface ICompetiosAttendanceCommandService
+  extends ICompetiosAttendanceInviteeStatusService {
+  revokeAttendanceInvitationCommand(
+    command: IRevokeCompetiosAttendanceInvitationCommand,
+  ): Observable<ICompetiosAttendanceStatus>;
+  cancelAttendanceEventCommand(
+    command: ICancelCompetiosAttendanceEventCommand,
+  ): Observable<ICompetiosAttendanceStatus>;
+}
+
+export const COMPETIOS_ATTENDANCE_COMMAND_SERVICE =
+  new InjectionToken<ICompetiosAttendanceCommandService>(
+    'CompetiosAttendanceCommandService',
   );
